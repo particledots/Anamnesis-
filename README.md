@@ -6,10 +6,10 @@ Bliss. The Habit has no published firmware; its manual and web guide were used o
 
 In Logic: **Audio Units > particledots > Anamnesis** (an audio effect: put it in an Audio FX slot, mono or stereo).
 
-Status: **milestones 1 and 2 of 3 done.** Milestone 1 (0.1.0) tested in Logic on 2026-11-25 on both Macs (M4 Mac mini with
+Status: **all 3 milestones done.** Milestone 1 (0.1.0) tested in Logic on 2026-11-25 on both Macs (M4 Mac mini with
 Logic 11.2.2, Intel Mac with Logic 10.7.8); milestone 2 (0.2.0, the modifiers and routing) tested in Logic on 2026-11-25 on
-the Intel Mac. Milestone 3 (0.3.0: Engage, Loop, Hold to scan, the options, Memory dry, Wide spread, the preset slots) is
-built and waiting for its Logic test on the Intel Mac.
+the Intel Mac. Milestone 3 (0.3.0: Engage, Loop, Hold to scan, the options, Memory dry, Wide spread, the preset slots) tested in Logic
+on 2026-11-25 on the Intel Mac.
 
 ## Installing
 
@@ -235,3 +235,9 @@ with hiss clockwise; Trimmer cuts the start / end of each echo on the beat in Sy
 octave and reverses; Filter low-pass / high-pass, singing in Feed without running away; Dropper pattern and random drops,
 choppy at full; switching Bank, Modifier and Routing while playing has no clicks; Feed with Bank Off makes the multi-tap
 pattern and the strip shows the echoes recorded; settings come back after saving and reopening.
+
+Milestone 3 (0.3.0, Actions run 45746277623, all jobs green, auval and pluginval strictness 5 passed for AU and VST3):
+tested by Bryn on 2026-11-25 on the Intel Mac (Logic 10.7.8). Everything works as described, no issues: all 8 test steps
+passed (panel with nothing dimmed, Engage, Dry kill and Trails, Loop held and latched with Size, Hold to scan, Memory dry
+and Wipe, memory emptied / kept with Collect, Wide spread, Save left / Save right and the Preset switch, and the presets
+coming back after saving and reopening). Bryn's words: "very playable in its own right".

@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.0 — milestone 3 (built, waiting for the Logic test on the Intel Mac)
+## 0.3.0 — milestone 3 (built and tested in Logic 2026-11-25)
 
 - **Engage, Loop, Hold to scan, Preset Left / Live / Right with Save left / Save right, the options (Collect, Wipe,
   Always, Latch, Dry kill, Trails, Wide spread) and Memory dry (Scanning / Off / On)** are live (their M3 tags removed;
@@ -18,6 +18,10 @@
   unchanged 0.2.0 engine in the self-test). Projects from 0.1.0 and 0.2.0 load with empty preset slots; Memory dry was
   stored as Scanning (the pedal's default), so moving Scan now also plays the memory directly (Off = the 0.2.0 sound).
 - Engine self-test: 386 checks. Plugin-layer check: 137 checks, plus a panel picture with the milestone 3 controls on.
+- Build: Actions run 45746277623, all jobs green; auval passed; pluginval strictness 5 passed (AU and VST3).
+- Logic test result (Bryn, 2026-11-25, Intel Mac with Logic 10.7.8): everything works as described, no issues (all 8
+  test steps passed: panel, Engage / Dry kill / Trails, Loop, Hold to scan, Memory dry and Wipe, Collect, Wide spread,
+  presets saved and recalled, also after saving and reopening the project).
 
 ## 0.2.0 — milestone 2 (built and tested in Logic 2026-11-25)
 
