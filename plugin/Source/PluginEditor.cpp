@@ -8,13 +8,6 @@ namespace
     constexpr float kStripX = 20.0f, kStripY = 46.0f, kStripW = 640.0f, kStripH = 86.0f;
     constexpr float kStripMid = 89.0f;
 
-    void tag (juce::Graphics& g, float x, float y, const char* m)        // (x, y) = top-left of the tag
-    {
-        g.setColour (tagLine());
-        g.drawRoundedRectangle (x + 0.5f, y + 0.5f, 23.0f, 15.0f, 3.0f, 1.0f);
-        textAt (g, m, x + 12.0f, y + 12.0f, tagText(), 11.0f);
-    }
-
     float stripXFor (double secondsBack)
     {
         const double t = juce::jlimit (0.0, anm::kMemorySeconds, secondsBack);
@@ -73,16 +66,20 @@ AnamnesisPanel::AnamnesisPanel (AnamnesisAudioProcessor& p) : proc (p)
     segs (bank,     { "A", "Off", "B" },        { 480, 164, 180, 24 });
     segs (modifier, { "1", "2", "3" },          { 480, 200, 180, 24 });
     segs (routing,  { "In", "Out", "Feed" },    { 480, 236, 180, 24 });
-    segs (preset,   { "Left", "Live", "Right" },{ 480, 272, 180, 24 }, false, true);
-    action ("Save left",  { 480, 306, 86, 22 }, true, 11.0f);
-    action ("Save right", { 574, 306, 86, 22 }, true, 11.0f);
+    segs (preset,   { "Left", "Live", "Right" },{ 480, 272, 180, 24 });
+    auto& saveL = action ("Save left",  { 480, 306, 86, 22 }, false, 11.0f);
+    auto& saveR = action ("Save right", { 574, 306, 86, 22 }, false, 11.0f);
+    saveL.onPress = [this, &saveL] { proc.saveSlot (0); saveL.flash(); };
+    saveR.onPress = [this, &saveR] { proc.saveSlot (1); saveR.flash(); };
 
-    // The big buttons
-    segs (engage,   { "Engage" },       { 20, 436, 120, 40 }, true, true, true).setTextInsetRight (32);
-    segs (loop,     { "Loop" },         { 150, 436, 120, 40 }, true, true, true).setTextInsetRight (32);
+    // The big buttons. Engage switches on and off; Loop is held (or switches, with Latch on); Hold to scan is held.
+    segs (engage,   { "Engage" },       { 20, 436, 120, 40 }, true, false, true);
+    loopButton = &segs (loop, { "Loop" }, { 150, 436, 120, 40 }, true, false, true);
+    loopButton->momentary = [this] { return ! proc.readParams().latch; };
     tapButton = &action ("Tap", { 280, 436, 120, 40 });
     tapButton->onPress = [this] { tapAt (juce::Time::getMillisecondCounterHiRes()); };
-    segs (scanHold, { "Hold to scan" }, { 410, 436, 120, 40 }, true, true, true).setTextInsetRight (32);
+    holdButton = &segs (scanHold, { "Hold to scan" }, { 410, 436, 120, 40 }, true, false, true);
+    holdButton->momentary = [] { return true; };
     clearButton = &action ("Clear memory", { 540, 436, 120, 40 });
     clearButton->onPress = [this]
     {
@@ -98,8 +95,8 @@ AnamnesisPanel::AnamnesisPanel (AnamnesisAudioProcessor& p) : proc (p)
     const char* optIds[7] = { collect, wipe, always, latch, dryKill, trails, wideSpread };
     const char* optNames[7] = { "Collect", "Wipe", "Always", "Latch", "Dry kill", "Trails", "Wide spread" };
     for (int i = 0; i < 7; ++i)
-        segs (optIds[i], { optNames[i] }, { 20 + i * 67, 510, 62, 28 }, true, true);
-    segs (memoryDry, { "Scanning", "Off", "On" }, { 492, 510, 168, 28 }, false, true);
+        segs (optIds[i], { optNames[i] }, { 20 + i * 67, 510, 62, 28 }, true);
+    segs (memoryDry, { "Scanning", "Off", "On" }, { 492, 510, 168, 28 });
 
     updateTexts();
     startTimerHz (30);
@@ -306,12 +303,11 @@ void AnamnesisPanel::paint (juce::Graphics& g)
     g.setColour (stripLine());
     g.fillRect (372.0f, 166.0f, 1.0f, 254.0f);
 
-    // Right column labels (Preset dimmed: milestone 3) and the modifier read-out
-    const auto dimText = text().withMultipliedAlpha (dimAlpha);
+    // Right column labels and the modifier read-out
     textAt (g, "Bank", 392, 180, text(), 12.0f, juce::Justification::centredLeft);
     textAt (g, "Modifier", 392, 216, text(), 12.0f, juce::Justification::centredLeft);
     textAt (g, "Routing", 392, 252, text(), 12.0f, juce::Justification::centredLeft);
-    textAt (g, "Preset", 392, 288, dimText, 12.0f, juce::Justification::centredLeft);
+    textAt (g, "Preset", 392, 288, text(), 12.0f, juce::Justification::centredLeft);
     g.setColour (strip());
     g.fillRoundedRectangle (392.0f, 356.0f, 268.0f, 44.0f, 5.0f);
     g.setColour (stripLine());
@@ -322,18 +318,13 @@ void AnamnesisPanel::paint (juce::Graphics& g)
     textAt (g, readoutDetail, 404, 391, muted(), 11.0f, juce::Justification::centredLeft);
 
     // Options row labels
-    textAt (g, "Options", 20, 502, muted().withMultipliedAlpha (dimAlpha), 11.0f, juce::Justification::centredLeft);
-    textAt (g, "Memory dry", 492, 502, muted().withMultipliedAlpha (dimAlpha), 11.0f, juce::Justification::centredLeft);
+    textAt (g, "Options", 20, 502, muted(), 11.0f, juce::Justification::centredLeft);
+    textAt (g, "Memory dry", 492, 502, muted(), 11.0f, juce::Justification::centredLeft);
 }
 
-void AnamnesisPanel::paintOverChildren (juce::Graphics& g)
+void AnamnesisPanel::paintOverChildren (juce::Graphics&)
 {
-    // Milestone tags (not dimmed, so they can be read)
-    tag (g, 440, 276, "M3");                        // Preset
-    tag (g, 108, 448, "M3");                        // Engage
-    tag (g, 238, 448, "M3");                        // Loop
-    tag (g, 498, 448, "M3");                        // Hold to scan
-    tag (g, 68, 490, "M3");                         // Options and Memory dry
+    // (milestone tags lived here; every control is live since 0.3.0)
 }
 
 // ================================================================================================ editor

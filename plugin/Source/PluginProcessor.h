@@ -7,11 +7,11 @@
 #include <anamnesis/Engine.h>
 #include "Parameters.h"
 
-class AnamnesisAudioProcessor : public juce::AudioProcessor
+class AnamnesisAudioProcessor : public juce::AudioProcessor, private juce::Timer
 {
 public:
     AnamnesisAudioProcessor();
-    ~AnamnesisAudioProcessor() override = default;
+    ~AnamnesisAudioProcessor() override { stopTimer(); }
 
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
     void releaseResources() override {}
@@ -45,6 +45,18 @@ public:
     void tapSize (double secondsBetweenTaps);                         // Tap: sets Size (Free) to the time between two taps
     void clearNow() { engine.requestClear(); }
 
+    // Presets (milestone 3). Two snapshots kept inside the plugin and saved with the project. The Preset switch picks
+    // Left / Live / Right: Left and Right play their snapshot at once (also when the switch is automated, with no panel),
+    // and the controls then move to show it; Live brings back the settings from before. An empty slot plays Live.
+    // A snapshot holds the sound and the options (not Engage, Loop, Hold to scan, Clear memory, the Preset switch, Zoom).
+    static constexpr int kSnapshotSize = 19;
+    static const char* const kSnapshotIds[kSnapshotSize];
+    void saveSlot (int slot);                                         // 0 = Save left, 1 = Save right: the current settings
+    bool slotFilled (int slot) const { return slot >= 0 && slot < 2 && filled[slot].load(); }
+    float slotValue (int slot, int index) const { return snap[slot][index].load(); }
+    // Moves the controls to the chosen snapshot (or back to Live). Runs on its own on the message thread; public for the check.
+    void applyPresetNow();
+    bool presetApplied() const { return appliedGen.load() == gen.load(); }
     // The panel's zoom (saved with the project). Index into kZooms.
     static constexpr int kNumZooms = 5;
     static constexpr float kZooms[kNumZooms] = { 0.75f, 1.0f, 1.25f, 1.5f, 2.0f };
@@ -53,6 +65,12 @@ public:
     void setZoom (int z) { zoom = juce::jlimit (0, kNumZooms - 1, z); }
 
 private:
+    void timerCallback() override { applyPresetNow(); }
+    void followPresetSwitch();                                        // audio thread: notices the Preset switch moving
+    void valuesFrom (const std::atomic<float>* store, anm::Params&) const;
+    juce::String slotText (const std::atomic<float>* store) const;
+    void slotFromText (std::atomic<float>* store, const juce::String&, bool& ok) const;
+
     std::shared_ptr<AnmParams::ReadoutContext> readout;
     juce::AudioProcessorValueTreeState apvts;
     anm::Engine engine;
@@ -66,6 +84,16 @@ private:
     std::atomic<float> *pLevel {}, *pRepeats {}, *pSize {}, *pSizeMode {}, *pModify {}, *pSpread {}, *pScan {}, *pScanMode {};
     std::atomic<float> *pBank {}, *pModifier {}, *pRouting {}, *pEngage {}, *pLoop {}, *pScanHold {}, *pClear {};
     std::atomic<float> *pCollect {}, *pWipe {}, *pAlways {}, *pLatch {}, *pDryKill {}, *pTrails {}, *pMemoryDry {}, *pWide {};
+    std::atomic<float> *pPreset {};
+
+    // Presets: the two snapshots, the Live settings kept while a snapshot plays, which one plays now, and a counter that says
+    // whether the controls already show it (gen == appliedGen) or the engine is still reading the store directly.
+    std::atomic<float>* pSnap[kSnapshotSize] {};
+    std::atomic<float> snap[2][kSnapshotSize];
+    std::atomic<float> live[kSnapshotSize];
+    std::atomic<bool> filled[2] { false, false };
+    std::atomic<int> presetPlaying { anm::PresetLive };
+    std::atomic<int> gen { 0 }, appliedGen { 0 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AnamnesisAudioProcessor)
 };

@@ -131,12 +131,35 @@ void AnmSegments::paint (juce::Graphics& g)
     }
 }
 
+void AnmSegments::press()
+{
+    if (! isEnabled() || ! toggle) return;
+    if (momentary && momentary())
+    {
+        held = true;
+        attachment.beginGesture();
+        attachment.setValueAsPartOfGesture (1.0f);
+        return;
+    }
+    attachment.setValueAsCompleteGesture (selected == 1 ? 0.0f : 1.0f);
+}
+
+void AnmSegments::release()
+{
+    if (! held) return;
+    held = false;
+    attachment.setValueAsPartOfGesture (0.0f);
+    attachment.endGesture();
+}
+
+void AnmSegments::mouseUp (const juce::MouseEvent&) { release(); }
+
 void AnmSegments::mouseDown (const juce::MouseEvent& e)
 {
     if (! isEnabled()) return;
     if (toggle)
     {
-        attachment.setValueAsCompleteGesture (selected == 1 ? 0.0f : 1.0f);
+        press();
         return;
     }
     const int n = labels.size();

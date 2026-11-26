@@ -27,8 +27,21 @@
 //   * Size in Sync while Logic plays: the Size grid (where Trimmer cuts, where Dropper's pattern sits, when Auto Scan rolls
 //     its dice) lines up with Logic's beats.
 //
+//   * Milestone 3, playing it like the pedal (every switch below fades in 20 ms or less: no clicks):
+//       Engage     the plugin's own on/off. Off: only the dry sound (the echoes stop, or fade out with Trails). Turning it off
+//                  empties the memory, unless Collect or Always is on. While off, the memory does not record (Always: it
+//                  does; Collect: it pauses and keeps its audio; Collect with Trails: it keeps moving on, keeping its audio).
+//       Loop       freezes the echo: it repeats exactly, nothing new goes in (the memory keeps recording). Changing Size
+//                  changes the loop's length. Released, the loop fades away with Repeats.
+//       Hold to scan  as if Scan were Auto at maximum, starting at once; released, the play head snaps back to the knob.
+//       Collect    the memory overdubs: what you play is layered on what was recorded 3 minutes before.
+//       Wipe       the echo is muted and the memory is heard directly (Memory dry On); in Feed, Repeats feeds it back.
+//       Memory dry the play heads heard directly, before the echo: Scanning (only while a play head moves), Off, On.
+//       Dry kill   the dry sound is muted while engaged (it comes back when Engage is off).
+//       Wide spread  the main echo to the left, the Spread echo to the right.
+//     With these at rest (and Memory dry Off, or Scanning with the play heads still), the sound is bit for bit 0.2.0's.
+//
 // Stereo: both channels use the same heads, times and random choices, so the stereo picture of the input is kept.
-// Milestone 3 adds Engage, Loop, Hold to scan, the options, Wide spread.
 
 #pragma once
 
@@ -71,6 +84,9 @@ namespace anm
         std::atomic<int>   noteIndex { -1 };              // Size in Sync: the note value used
         std::atomic<bool>  memoryOk { true };
         std::atomic<int>   modifierInEffect { -1 };       // the modifier heard now (ModNone = none or neutral)
+        std::atomic<bool>  looping { false };             // milestone 3: the echo is frozen (Loop)
+        std::atomic<bool>  memoryRecording { true };      // the memory is moving on (false: paused, Engage off)
+        std::atomic<float> memoryDryGain { 0.0f };        // how much Memory dry is heard now (0..1)
     };
 
     class Engine
@@ -134,9 +150,12 @@ namespace anm
         };
 
         void stepAutoScan();
+        bool startTrip (double size);
         double randomUnit();
         void writePicture (float peakValue);
         void doClear();
+        void clearMemoryOnly();
+        void clearEchoOnly();
 
         Params params;
         double sampleRate = 0.0;
@@ -158,6 +177,27 @@ namespace anm
             }
         };
         Ramp loopFeedback, memoryFeed;          // In / Out: the echo's own feedback; Feed: the echo back into the memory
+        // Milestone 3 (all 20 ms unless noted): engaged; echo heard (engaged or Trails); dry (Dry kill); loop; Collect's
+        // layering; echo not wiped; Wide spread; recording the input (5 ms); Memory dry (30 ms)
+        Ramp engageGain, echoOn, dryGain, loopGain, layerGain, unwiped, wideGain, recordGain, memDryGain;
+        bool lastEngaged = true, lastHold = false;
+        bool dumpWhenSilent = false, killEchoWhenSilent = false;   // Engage off: what to empty once the fades are done
+        int memDryHold = 0, memDryHoldSamples = 0;               // Memory dry Scanning: stays on a moment after a move
+        double lastPrimaryAt = 0.0, lastSecondaryAt = 0.0;
+        float lastHeadP[2] = { 0.0f, 0.0f }, lastHeadS[2] = { 0.0f, 0.0f };   // the play heads one sample ago (Wipe in Feed)
+        float scanKnob = 0.0f;                                  // Scan as heard (Hold to scan: maximum)
+
+        // Loop: the echo copies itself exactly, one whole number of samples back (two periods while Size changes)
+        struct LoopTaps
+        {
+            double period[2] = { 0.0, 0.0 };
+            int active = 0, hold = 0;
+            float fade = 1.0f;
+            double seen = 0.0;          // the period Size asks for, and for how long it has not changed
+            int still = 0;
+        };
+        LoopTaps loopTaps;
+        int loopSettleSamples = 4800;
         mod::Slot slotIn, slotOut;
         float headJumpStep = 0.0f, echoFadeStep = 0.0f, clearFadeStep = 0.0f, inputFadeStep = 0.0f;
         double glideCoeff = 0.0;

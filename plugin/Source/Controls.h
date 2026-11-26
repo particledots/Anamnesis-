@@ -39,12 +39,18 @@ public:
     int selectedIndex() const { return selected; }
     void setTextInsetRight (int units) { textInset = units; repaint(); }      // room for a milestone tag on a big button
     const juce::StringArray& getLabels() const { return labels; }
+    // A switch can be momentary: on while held, off when let go (Loop without Latch, Hold to scan). Asked on every press.
+    std::function<bool()> momentary;
+    void press();                                     // what a click does (mouse down) .. and letting go (mouse up)
+    void release();
+    void mouseUp (const juce::MouseEvent&) override;
 
 private:
     juce::RangedAudioParameter& param;
     juce::StringArray labels;
     bool toggle, button;
     int selected = 0, textInset = 0;
+    bool held = false;
     juce::ParameterAttachment attachment;
 };
 

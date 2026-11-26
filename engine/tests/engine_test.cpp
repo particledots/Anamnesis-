@@ -15,6 +15,7 @@
 // and In with 4x speed for 5 minutes); block sizes; sample rates; CPU.
 
 #include "anamnesis/Engine.h"
+#include "ref020.h"
 
 #include <algorithm>
 #include <chrono>
@@ -50,7 +51,16 @@ struct Render
     std::vector<float> outL, outR, wetL, wetR;
 };
 
-static Render render (Engine& e, Params p, double sr, double seconds, const std::function<float (long, int)>& in,
+// The 0.2.0 engine is given the same settings (it knew only the milestone 1 and 2 ones).
+static void applyParams (Engine& e, const Params& p) { e.setParams (p); }
+static void applyParams (ref020::Engine& e, const Params& p)
+{
+    e.setParams (ref020::Settings { p.level, p.repeats, p.size, p.sizeMode, p.modify, p.spread, p.scan, p.scanMode, p.bank,
+                                    p.modifier, p.routing, p.bpm, p.beatsPerBar, p.hostBeats, p.hostPlaying });
+}
+
+template <typename E>
+static Render render (E& e, Params p, double sr, double seconds, const std::function<float (long, int)>& in,
                       const std::function<void (long, Params&)>& change = {}, int block = 256, int channels = 2,
                       const std::function<int (long)>& blockSize = {})
 {
@@ -64,7 +74,7 @@ static Render render (Engine& e, Params p, double sr, double seconds, const std:
         int n = blockSize ? blockSize (pos) : block;
         n = (int) std::min<long> (n, total - pos);
         if (change) change (pos, p);
-        e.setParams (p);
+        applyParams (e, p);
         for (int i = 0; i < n; ++i) { L[(size_t) i] = in (pos + i, 0); R[(size_t) i] = in (pos + i, 1); }
         float* ch[2] = { L.data(), R.data() };
         e.process (ch, channels, n);
@@ -129,6 +139,7 @@ static Params plain (double sizeSec = 0.5)
     p.spread = 0.0f;
     p.scan = 0.0f;
     p.scanMode = ScanAuto;
+    p.memoryDry = MemoryDryOff;     // the milestone 1 and 2 tests measure the echo as 0.2.0 made it (Memory dry: milestone 3)
     return p;
 }
 
@@ -1164,8 +1175,532 @@ static void testM2()
     testModCpu();
 }
 
-int main()
+// ================================================================================================ milestone 3
+
+// Strength of one frequency in a stretch of audio (Goertzel), as an amplitude.
+static double toneLevel (const std::vector<float>& v, long from, long to, double hz, double sr)
 {
+    from = std::max (0L, from); to = std::min ((long) v.size(), to);
+    const double w = 2.0 * kPi * hz / sr, k = 2.0 * std::cos (w);
+    double s1 = 0.0, s2 = 0.0;
+    for (long i = from; i < to; ++i) { const double s0 = v[(size_t) i] + k * s1 - s2; s2 = s1; s1 = s0; }
+    const double pw = s1 * s1 + s2 * s2 - k * s1 * s2;
+    return to > from ? 2.0 * std::sqrt (std::max (0.0, pw)) / (double) (to - from) : 0.0;
+}
+static auto burst (double sr, double at, double len, double hz, float amp)
+{
+    return [=] (long i, int) { const double t = i / sr; return t >= at && t < at + len ? amp * (float) std::sin (2.0 * kPi * hz * t) : 0.0f; };
+}
+// Manual Scan knob for a distance back (before it is snapped to the Size grid)
+static float scanKnobFor (double seconds) { return (float) std::sqrt (seconds / kScanMaxSeconds); }
+static long at (double t, double sr) { return (long) std::llround (t * sr); }
+
+// With the milestone 3 controls at rest, the sound is bit for bit 0.2.0's (the 0.2.0 engine runs alongside, unchanged).
+static void testM3SameAs020()
+{
+    for (double sr : { 44100.0, 48000.0, 192000.0 })
+    {
+        const double seconds = sr > 100000.0 ? 8.0 : 30.0;
+        auto in = [&] (long i, int c) { return richInput (i, c, sr); };
+        // everything from milestones 1 and 2 moves: Size (Free and Sync), Repeats, Level, Scan (Manual and Auto), Spread,
+        // Bank, Modifier, Routing, Modify; Logic plays and stops
+        auto change = [&] (long pos, Params& q)
+        {
+            const long step = pos / (long) (0.5 * sr);
+            std::mt19937 g ((unsigned) step * 7919u + 11u);
+            std::uniform_real_distribution<float> u (0.0f, 1.0f);
+            if (pos % (long) (0.5 * sr) < 256)
+            {
+                q.size = 0.15f + 0.4f * u (g); q.repeats = u (g); q.level = u (g); q.spread = u (g) < 0.4f ? 0.0f : 0.5f * u (g);
+                q.scan = u (g); q.scanMode = u (g) < 0.5f ? ScanAuto : ScanManual; q.sizeMode = u (g) < 0.2f ? SizeSync : SizeFree;
+                q.bank = (int) (u (g) * 2.99f); q.modifier = (int) (u (g) * 2.99f); q.routing = (int) (u (g) * 2.99f);
+                q.modify = u (g) < 0.3f ? 0.5f : u (g);
+                q.hostPlaying = u (g) < 0.5f; q.hostBeats = q.hostPlaying ? pos / sr * 2.0 : -1.0;
+            }
+        };
+        Params p = plain (0.37); p.repeats = 0.6f; p.spread = 0.2f; p.scan = 0.4f;     // Memory dry Off (plain)
+        Engine e; e.prepare (sr); e.seedRandom (31);
+        ref020::Engine r; r.prepare (sr); r.seedRandom (31);
+        const auto a = render (e, p, sr, seconds, in, change);
+        const auto b = render (r, p, sr, seconds, in, change);
+        long diff = 0;
+        for (size_t i = 0; i < a.outL.size(); ++i) if (a.outL[i] != b.outL[i] || a.outR[i] != b.outR[i]) ++diff;
+        CHECK (diff == 0, "%.0f Hz: milestone 3 controls at rest (Memory dry Off), every older control moving: bit for bit 0.2.0 (%ld samples differ)", sr, diff);
+        if (sr == 48000.0) std::printf ("m3: same as 0.2.0, bit for bit, %.0f s with every older control moving: %ld samples differ\n", seconds, diff);
+    }
+    {
+        // Memory dry Scanning (the default) with the play heads still: also bit for bit 0.2.0
+        const double sr = 48000.0;
+        Params p = plain (0.3); p.memoryDry = MemoryDryScanning; p.repeats = 0.7f; p.scanMode = ScanManual; p.scan = 0.2f; p.spread = 0.3f;
+        p.bank = BankB; p.modifier = 1; p.modify = 0.3f; p.routing = RouteIn;
+        Engine e; e.prepare (sr);
+        ref020::Engine r; r.prepare (sr);
+        auto in = [&] (long i, int c) { return richInput (i, c, sr); };
+        const auto a = render (e, p, sr, 20.0, in), b = render (r, p, sr, 20.0, in);
+        long diff = 0;
+        for (size_t i = 0; i < a.outL.size(); ++i) if (a.outL[i] != b.outL[i] || a.outR[i] != b.outR[i]) ++diff;
+        CHECK (diff == 0, "Memory dry Scanning with the play heads still: bit for bit 0.2.0 (%ld samples differ)", diff);
+    }
+    {
+        // Modify 12:00 = Bank Off, bit for bit, also with the milestone 3 options on
+        const double sr = 48000.0;
+        Params base = plain (0.37); base.repeats = 0.7f; base.spread = 0.25f; base.scanMode = ScanManual; base.scan = 0.3f;
+        base.collect = true; base.wideSpread = true; base.memoryDry = MemoryDryOn; base.dryKill = true; base.trails = true;
+        auto in = [&] (long i, int c) { return richInput (i, c, sr); };
+        int bad = 0;
+        for (int r = 0; r < 3; ++r)
+        {
+            Params off = base; off.routing = r; off.bank = BankOff;
+            Engine ref; ref.prepare (sr); ref.seedRandom (5);
+            const auto a = render (ref, off, sr, 6.0, in, [] (long pos, Params& q) { q.loop = pos > 4 * 48000; });
+            for (int kind = 0; kind < kNumModifiers; ++kind)
+            {
+                Engine e; e.prepare (sr); e.seedRandom (5);
+                const auto b = render (e, modP (base, kind, r, 0.5f), sr, 6.0, in, [] (long pos, Params& q) { q.loop = pos > 4 * 48000; });
+                for (size_t i = 0; i < a.outL.size(); ++i) if (a.outL[i] != b.outL[i] || a.outR[i] != b.outR[i]) { ++bad; break; }
+            }
+        }
+        CHECK (bad == 0, "Modify 12:00 = Bank Off bit for bit with Collect, Wide spread, Memory dry On, Dry kill, Trails and Loop on (%d of 18 differ)", bad);
+    }
+}
+
+// Engage: off = only the dry sound; the memory is emptied (Collect: paused and kept; Always: keeps recording); Trails;
+// re-engaging during trails clears them; Dry kill.
+static void testEngage()
+{
+    const double sr = 48000.0;
+    const double S = 0.25, D = 2.0;
+    auto base = [&]
+    {
+        Params p = plain (S); p.repeats = 0.0f; p.scanMode = ScanManual; p.scan = scanKnobFor (D); return p;
+    };
+    CHECK (std::fabs (scanManualSeconds (scanKnobFor (D), S) - D) < 1e-9, "test set-up: Scan reads %.3f s back", scanManualSeconds (scanKnobFor (D), S));
+    // a 1 kHz burst at 0.5 s; Engage off from 1.0 to 1.5 s (plus a second burst at 1.2 s, played while off)
+    auto in = [&] (long i, int c) { return burst (sr, 0.5, 0.05, 1000.0, 0.5f) (i, c) + burst (sr, 1.2, 0.05, 1500.0, 0.5f) (i, c); };
+    auto offOn = [&] (long pos, Params& q) { q.engage = ! (pos >= at (1.0, sr) && pos < at (1.5, sr)); };
+    struct Case { const char* name; bool collect, always; };
+    double arrival[3] = { -1, -1, -1 };
+    double offLevel[3], laterBurst[3];
+    int idx = 0;
+    for (const Case& c : { Case { "nothing kept", false, false }, Case { "Collect", true, false }, Case { "Always", false, true } })
+    {
+        Engine e; Params p = base(); p.collect = c.collect; p.always = c.always; e.prepare (sr);
+        const auto r = render (e, p, sr, 4.5, in, offOn);
+        offLevel[idx] = maxAbs (r.wetL, at (1.03, sr), at (1.5, sr));
+        // where the first burst (1 kHz) comes back
+        double best = 0.0; long bestAt = -1;
+        for (long w = at (1.5, sr); w + 480 < (long) r.wetL.size(); w += 240)
+        {
+            const double lvl = toneLevel (r.wetL, w, w + 480, 1000.0, sr);
+            if (lvl > best) { best = lvl; bestAt = w; }
+        }
+        long onset = -1;
+        for (long w = at (1.5, sr); best > 0.05 && w + 480 < (long) r.wetL.size(); w += 48)
+            if (toneLevel (r.wetL, w, w + 480, 1000.0, sr) > 0.5 * best) { onset = w + 240; break; }
+        (void) bestAt;
+        arrival[idx] = onset >= 0 ? (double) onset / sr : -1.0;
+        laterBurst[idx] = toneLevel (r.wetL, at (1.2 + D + S, sr), at (1.25 + D + S, sr), 1500.0, sr);
+        ++idx;
+    }
+    CHECK (offLevel[0] == 0.0 && offLevel[1] == 0.0 && offLevel[2] == 0.0, "Engage off: only the dry sound, exactly (%g %g %g)", offLevel[0], offLevel[1], offLevel[2]);
+    CHECK (arrival[0] < 0.0, "Engage off without Collect or Always empties the memory: the old playing never comes back (%.3f)", arrival[0]);
+    CHECK (arrival[1] > 0.5 + D + S + 0.45 && arrival[1] < 0.5 + D + S + 0.53,
+           "Collect: the memory pauses while off and keeps its audio (burst back at %.3f s, %.3f s later than without the pause)", arrival[1], arrival[1] - (0.5 + D + S));
+    CHECK (std::fabs (arrival[2] - (0.5 + D + S)) < 0.012, "Always: the memory keeps running while off (burst back at %.3f s, expected %.3f)", arrival[2], 0.5 + D + S);
+    CHECK (laterBurst[2] > 0.1 && laterBurst[0] < 0.001 && laterBurst[1] < 0.001,
+           "Always records what is played while off (%.3f); without it nothing is recorded (%.4f, %.4f)", laterBurst[2], laterBurst[0], laterBurst[1]);
+    std::printf ("m3: Engage off and on: old playing back at %.3f s with Collect (paused 0.5 s), %.3f s with Always, never without\n", arrival[1], arrival[2]);
+
+    // Trails: echoes keep sounding (and fading) after Engage off; turning back on clears them (unless Collect or Always)
+    {
+        Params p = plain (0.2); p.repeats = 0.8f; p.trails = true;
+        Engine e; e.prepare (sr);
+        const auto r = render (e, p, sr, 4.0, burst (sr, 0.1, 0.05, 700.0, 0.5f), [&] (long pos, Params& q) { q.engage = pos < at (0.5, sr) || pos >= at (2.0, sr); });
+        const double during = rms (r.wetL, at (0.6, sr), at (1.0, sr)), later = rms (r.wetL, at (1.6, sr), at (2.0, sr));
+        CHECK (during > 0.02 && later < during, "Trails: the echoes keep sounding after Engage off (%.3f) and fade (%.3f)", during, later);
+        CHECK (maxAbs (r.wetL, at (2.02, sr), at (4.0, sr)) == 0.0, "Trails: turning Engage back on clears the trails (%.5f)", maxAbs (r.wetL, at (2.02, sr), at (4.0, sr)));
+        Params q2 = p; q2.collect = true;
+        Engine f; f.prepare (sr);
+        const auto r2 = render (f, q2, sr, 3.0, burst (sr, 0.1, 0.05, 700.0, 0.5f), [&] (long pos, Params& q) { q.engage = pos < at (0.5, sr) || pos >= at (1.5, sr); });
+        CHECK (rms (r2.wetL, at (1.6, sr), at (2.0, sr)) > 0.002, "Trails with Collect: turning back on keeps them (%.4f)", rms (r2.wetL, at (1.6, sr), at (2.0, sr)));
+        Params q3 = p; q3.trails = false;
+        Engine h; h.prepare (sr);
+        const auto r3 = render (h, q3, sr, 1.5, burst (sr, 0.1, 0.05, 700.0, 0.5f), [&] (long pos, Params& q) { q.engage = pos < at (0.5, sr); });
+        CHECK (maxAbs (r3.wetL, at (0.53, sr), at (1.5, sr)) == 0.0, "without Trails the echoes stop when Engage goes off");
+        // Repeats infinite with Trails: limited while off, so they fade
+        Params q4 = p; q4.repeats = 1.0f;
+        Engine k; k.prepare (sr);
+        const auto r4 = render (k, q4, sr, 12.0, burst (sr, 0.1, 0.1, 700.0, 0.5f), [&] (long pos, Params& q) { q.engage = pos < at (0.5, sr); });
+        CHECK (rms (r4.wetL, at (11.0, sr), at (12.0, sr)) < 0.05 * rms (r4.wetL, at (0.6, sr), at (1.6, sr)),
+               "Trails with Repeats infinite still fade out while off (%.5f from %.4f)", rms (r4.wetL, at (11.0, sr), at (12.0, sr)), rms (r4.wetL, at (0.6, sr), at (1.6, sr)));
+    }
+    // Dry kill: while engaged only the echo is heard; Engage off brings the dry sound back
+    {
+        Params p = plain (0.25); p.dryKill = true;
+        Engine e; e.prepare (sr);
+        const auto r = render (e, p, sr, 2.0, sine (sr, 300.0, 0.5f), [&] (long pos, Params& q) { q.engage = pos < at (1.0, sr); });
+        CHECK (maxAbs (r.outL, 0, at (0.24, sr)) == 0.0, "Dry kill: the dry sound is muted while engaged");
+        double d = 0.0;
+        for (long i = at (1.03, sr); i < (long) r.outL.size(); ++i) d = std::max (d, (double) std::fabs (r.outL[(size_t) i] - 0.5f * (float) std::sin (2.0 * kPi * 300.0 * (double) i / sr)));
+        CHECK (d < 1e-6, "Dry kill: the dry sound comes back when Engage goes off (difference %.2g)", d);
+    }
+}
+
+// Loop: the echo freezes; what is played meanwhile does not get in; the memory keeps recording; Size changes the length
+// without clicks or pitch warping; released, it fades with Repeats.
+static void testLoop()
+{
+    const double sr = 48000.0;
+    const long P = (long) std::llround (0.3 * sr);
+    for (int routing : { (int) RouteOut, (int) RouteIn })
+    {
+        Params p = plain (0.3); p.repeats = 0.5f; p.routing = routing;
+        if (routing == RouteIn) { p.bank = BankA; p.modifier = 0; p.modify = knobAt (0.3f); }     // In: 2x would climb an octave every repeat
+        Engine e; e.prepare (sr);
+        auto in = [&] (long i, int) -> float
+        {
+            const double t = i / sr;
+            if (t < 1.0) return 0.4f * (float) std::sin (2.0 * kPi * 300.0 * t);
+            if (t < 1.05) return 0.0f;                   // (the loop fades in over 20 ms)
+            if (t < 6.0) return 0.6f * (float) std::sin (2.0 * kPi * 2000.0 * t);
+            return 0.0f;
+        };
+        float pictureDuring = 0.0f;
+        const auto r = render (e, p, sr, 12.0, in, [&] (long pos, Params& q)
+        {
+            q.loop = pos >= at (1.0, sr);
+            if (pos >= at (5.9, sr) && pictureDuring == 0.0f) pictureDuring = e.picture().get (2);
+        });
+        // (the loop itself is copied exactly; reading it between samples can differ in the last binary digit)
+        double notSame = 0.0;
+        for (long i = at (6.5, sr); i < (long) r.outL.size(); ++i) notSame = std::max (notSame, (double) std::fabs (r.outL[(size_t) i] - r.outL[(size_t) (i - P)]));
+        const double keep = rms (r.outL, at (7.0, sr), at (11.0, sr));
+        const double leak = toneLevel (r.outL, at (7.0, sr), at (11.0, sr), 2000.0, sr);
+        CHECK (notSame < 1e-6 && keep > 0.02, "Loop (%s): the echo repeats exactly, every %ld samples, for 5 s (largest difference %.2g; level %.3f)",
+               routeName (routing), P, notSame, keep);
+        CHECK (leak < 1e-4, "Loop (%s): what is played while looping does not get into the loop (%.6f)", routeName (routing), leak);
+        CHECK (pictureDuring > 0.3f, "Loop: the memory keeps recording (%.2f)", pictureDuring);
+    }
+    // released: the loop fades with Repeats; and Engage off stops it
+    {
+        Params p = plain (0.3); p.repeats = 0.5f;
+        Engine f; f.prepare (sr);
+        auto quiet = [&] (long i, int) { return i < at (1.0, sr) ? 0.4f * (float) std::sin (2.0 * kPi * 300.0 * (double) i / sr) : 0.0f; };
+        const auto a = render (f, p, sr, 8.0, quiet, [&] (long pos, Params& q) { q.loop = pos >= at (1.0, sr) && pos < at (4.0, sr); });
+        const double held = rms (a.outL, at (3.0, sr), at (3.9, sr)), after1 = rms (a.outL, at (4.3, sr), at (4.6, sr)), after2 = rms (a.outL, at (5.5, sr), at (5.8, sr));
+        CHECK (held > 0.05 && after1 < held && after2 < 0.6 * after1, "Loop released: it fades with Repeats (%.3f, then %.3f, %.3f)", held, after1, after2);
+        Engine k; k.prepare (sr);
+        const auto b = render (k, p, sr, 4.0, quiet, [&] (long pos, Params& q) { q.loop = pos >= at (1.0, sr); q.engage = pos < at (2.0, sr); });
+        CHECK (maxAbs (b.wetL, at (2.03, sr), at (4.0, sr)) == 0.0, "Loop: Engage off stops it (no Trails)");
+    }
+    // Size moved while looping: no pitch warping, no clicks; the loop takes the new length once Size settles
+    {
+        Params p = plain (0.4); p.repeats = 0.3f;
+        Engine e; e.prepare (sr);
+        auto in = [&] (long i, int) { return i < at (2.0, sr) ? 0.5f * (float) std::sin (2.0 * kPi * 440.0 * (double) i / sr) : 0.0f; };
+        const double steps[5] = { 0.23, 0.61, 0.37, 0.71, 0.29 };
+        const auto r = render (e, p, sr, 16.0, in, [&] (long pos, Params& q)
+        {
+            const double t = pos / sr;
+            q.loop = t >= 2.0;
+            if (t > 3.0 && t <= 9.0) q.size = sizeKnobForSeconds (0.4 + 0.25 * std::sin ((t - 3.0) * 0.9));      // swept 0.15 .. 0.65 s
+            if (t > 9.0) q.size = sizeKnobForSeconds (t < 12.0 ? steps[(int) ((t - 9.0) / 0.6)] : 0.53);        // jumps, then 0.53 s
+        });
+        int bad = 0, windows = 0;
+        for (double t = 2.1; t + 0.1 < 16.0; t += 0.1)
+        {
+            const double f = medianPitch (r.outL, at (t, sr), at (t + 0.1, sr), sr);
+            ++windows;
+            if (std::fabs (f / 440.0 - 1.0) > 0.01) ++bad;
+        }
+        const double base = 2.0 * kPi * 440.0 / sr * maxAbs (r.outL, at (2.1, sr), (long) r.outL.size());
+        CHECK (windows > 130 && bad == 0, "Size swept and jumped while looping: no pitch warping (%d of %d windows off by more than 1%%)", bad, windows);
+        CHECK (maxStep (r.outL, at (2.1, sr)) < 1.3 * base, "Size swept and jumped while looping: no clicks (step %.4f, clean %.4f)", maxStep (r.outL, at (2.1, sr)), base);
+        const long P2 = (long) std::llround (0.53 * sr);
+        double d = 0.0;
+        for (long i = at (14.0, sr); i < (long) r.outL.size(); ++i) d = std::max (d, (double) std::fabs (r.outL[(size_t) i] - r.outL[(size_t) (i - P2)]));
+        CHECK (d < 1e-6 && rms (r.outL, at (14.0, sr), at (16.0, sr)) > 0.1, "the loop takes the new Size as its length (repeats every 0.53 s, difference %.2g, level %.3f)",
+               d, rms (r.outL, at (14.0, sr), at (16.0, sr)));
+        std::printf ("m3: Loop with Size swept for 6 s and jumped 5 times: pitch within 1%% in %d of %d windows, largest step %.4f (clean %.4f)\n",
+                     windows - bad, windows, maxStep (r.outL, at (2.1, sr)), base);
+    }
+}
+
+// Hold to scan: as if Scan were Auto at maximum, starting at once; released, the play head snaps back to the knob.
+static void testHoldToScan()
+{
+    const double sr = 48000.0;
+    Params p = plain (0.3); p.scanMode = ScanManual; p.scan = scanKnobFor (0.6); p.repeats = 0.4f;
+    Engine e; e.prepare (sr); e.seedRandom (3);
+    double farthest = 0.0, afterRelease = -1.0;
+    render (e, p, sr, 26.0, sine (sr, 220.0, 0.3f), [&] (long pos, Params& q)
+    {
+        const double t = pos / sr;
+        q.scanHold = t >= 20.0 && t < 24.0;
+        if (q.scanHold) farthest = std::max (farthest, (double) e.display().primarySeconds.load());
+        if (t >= 24.03 && afterRelease < 0.0) afterRelease = e.display().primarySeconds.load();
+    });
+    const double target = scanManualSeconds (p.scan, 0.3);
+    CHECK (farthest > 2.0, "Hold to scan: the play head travels into the past at once (as far as %.1f s back in 4 s)", farthest);
+    CHECK (std::fabs (afterRelease - target) < 1e-6, "Hold to scan released: snaps back to the Scan knob's place (%.3f s, knob %.3f s)", afterRelease, target);
+    std::printf ("m3: Hold to scan travelled %.1f s back, snapped back to %.2f s\n", farthest, afterRelease);
+}
+
+// Collect: the memory overdubs. Wipe and Memory dry make the memory heard directly.
+static void testCollect()
+{
+    const double sr = 48000.0;
+    // The memory alone, heard directly (Wipe), 5 s back. A 1 kHz burst at 1 s; a 2 kHz burst at 181 s (3 minutes later).
+    auto in = [&] (long i, int c) { return burst (sr, 1.0, 0.2, 1000.0, 0.4f) (i, c) + burst (sr, 181.0, 0.2, 2000.0, 0.4f) (i, c); };
+    double a1[2], a2[2], b2[2], first[2];
+    for (int k = 0; k < 2; ++k)
+    {
+        Params p = plain (0.5); p.scanMode = ScanManual; p.scan = scanKnobFor (5.0); p.wipe = true; p.collect = k == 1;
+        Engine e; e.prepare (sr);
+        const auto r = render (e, p, sr, 186.4, in, {}, 4096);
+        first[k] = toneLevel (r.wetL, at (6.02, sr), at (6.18, sr), 1000.0, sr);
+        a1[k] = toneLevel (r.wetL, at (186.02, sr), at (186.18, sr), 1000.0, sr);
+        b2[k] = toneLevel (r.wetL, at (186.02, sr), at (186.18, sr), 2000.0, sr);
+        a2[k] = toneLevel (r.wetL, at (180.0, sr), at (185.9, sr), 1000.0, sr);
+    }
+    const double lv = levelGain (std::sqrt (0.5f));
+    CHECK (std::fabs (first[0] - 0.4 * lv) < 0.01 && std::fabs (first[1] - 0.4 * lv) < 0.01, "Wipe: the memory is heard directly, 5 s back (%.3f, %.3f)", first[0], first[1]);
+    CHECK (b2[0] > 0.38 && a1[0] < 0.001, "without Collect, 3 minutes later the memory holds only the new playing (2 kHz %.3f, 1 kHz %.4f)", b2[0], a1[0]);
+    CHECK (b2[1] > 0.38 && a1[1] > 0.38, "Collect: 3 minutes later the old playing is layered under the new (2 kHz %.3f, 1 kHz %.3f)", b2[1], a1[1]);
+    CHECK (a2[1] < 0.01, "Collect: nothing else came back (%.4f)", a2[1]);
+    std::printf ("m3: Collect layers the memory: after 3 minutes the 1 kHz from then (%.3f) is under the 2 kHz of now (%.3f)\n", a1[1], b2[1]);
+
+    // the layering at every rate, and its limiter, measured on the memory itself
+    for (double rate : { 44100.0, 48000.0, 192000.0 })
+    {
+        const int stride = rate > kFullRateMemoryLimit ? 2 : 1;
+        dsp::Tape t; t.prepare (kMemorySeconds + 1.0, rate, stride); t.setLayerPeriod (kMemorySeconds, rate);
+        const long period = (long) std::llround (kMemorySeconds * rate);
+        double worst = 0.0;
+        // a constant 0.3 layered on itself ten times: 0.3, 0.6, then the soft limiter takes over
+        for (long i = 0; i < 4 * period + 1000; ++i) t.write (0.3f, 1.0f);
+        worst = std::fabs (t.read (100.0));
+        // 0.25 for 1000 samples, then silence for 3 minutes and 2000 samples: 3 minutes later the 0.25 is there again
+        dsp::Tape u; u.prepare (kMemorySeconds + 1.0, rate, stride); u.setLayerPeriod (kMemorySeconds, rate);
+        for (long i = 0; i < period + 2000; ++i) u.write (i < 1000 ? 0.25f : 0.0f, 1.0f);
+        const float layered = u.read (1499.0), between = u.read (500.0);       // 3 minutes + 500 samples after the start; and later
+        CHECK (worst > 0.8 && worst <= 1.0 && std::fabs (layered - 0.25f) < 0.01f && std::fabs (between) < 1e-6f,
+               "%.0f Hz: Collect layers exactly 3 minutes back (%.3f, then %.4f) and the layers stay below 1 (%.3f)", rate, layered, between, worst);
+    }
+}
+
+// Wipe in Feed: Repeats feeds the memory back into itself; Memory dry On / Off / Scanning.
+static void testWipeAndMemoryDry()
+{
+    const double sr = 48000.0;
+    const double S = 0.25, D = 1.0;
+    auto imp = impulseAt (at (0.1, sr));
+    auto echoAndDirect = [&] (Params p, double& direct, double& echoed)
+    {
+        Engine e; e.prepare (sr);
+        const auto r = render (e, p, sr, 2.0, imp);
+        direct = maxAbs (r.wetL, at (0.1 + D, sr) - 20, at (0.1 + D, sr) + 20);
+        echoed = maxAbs (r.wetL, at (0.1 + D + S, sr) - 20, at (0.1 + D + S, sr) + 20);
+    };
+    Params p = plain (S); p.scanMode = ScanManual; p.scan = scanKnobFor (D);
+    double d0, e0, d1, e1, d2, e2, d3, e3;
+    p.memoryDry = MemoryDryOff;      echoAndDirect (p, d0, e0);
+    p.memoryDry = MemoryDryOn;       echoAndDirect (p, d1, e1);
+    p.memoryDry = MemoryDryScanning; echoAndDirect (p, d2, e2);
+    p.memoryDry = MemoryDryOff; p.wipe = true; echoAndDirect (p, d3, e3);
+    CHECK (d0 < 1e-6 && e0 > 0.9, "Memory dry Off: only the echo (direct %.4f, echo %.3f)", d0, e0);
+    CHECK (d1 > 0.9 && e1 > 0.9, "Memory dry On: the memory heard directly and through the echo (direct %.3f, echo %.3f)", d1, e1);
+    CHECK (d2 < 1e-6 && e2 > 0.9, "Memory dry Scanning, play head still: only the echo (direct %.4f)", d2);
+    CHECK (d3 > 0.9 && e3 < 1e-6, "Wipe: the echo is muted and the memory is heard directly (direct %.3f, echo %.5f)", d3, e3);
+    // Scanning: heard while the play head moves, gone soon after it stops
+    {
+        Params q = plain (S); q.scanMode = ScanManual; q.scan = 0.1f; q.memoryDry = MemoryDryScanning;
+        Engine e; e.prepare (sr);
+        float moving = 0.0f, still = 1.0f;
+        render (e, q, sr, 6.0, sine (sr, 200.0, 0.3f), [&] (long pos, Params& qq)
+        {
+            const double t = pos / sr;
+            if (t > 2.0 && t < 3.0) qq.scan = 0.1f + 0.2f * (float) (t - 2.0);
+            if (t > 2.5 && t < 2.9) moving = std::max (moving, e.display().memoryDryGain.load());
+            if (t > 4.0) still = std::min (still, e.display().memoryDryGain.load());
+        });
+        CHECK (moving > 0.99f && still == 0.0f, "Memory dry Scanning: heard while Scan moves (%.2f), not once it is still (%.2f)", moving, still);
+    }
+    // Wipe in Feed: Repeats feeds the memory heard directly back into it, a repeat every D
+    {
+        Params q = plain (S); q.scanMode = ScanManual; q.scan = scanKnobFor (D); q.wipe = true; q.routing = RouteFeed; q.repeats = 0.6f;
+        Engine e; e.prepare (sr);
+        const auto r = render (e, q, sr, 4.0, imp);
+        const double r1 = maxAbs (r.wetL, at (0.1 + D, sr) - 20, at (0.1 + D, sr) + 20), r2 = maxAbs (r.wetL, at (0.1 + 2 * D, sr) - 30, at (0.1 + 2 * D, sr) + 30);
+        CHECK (r1 > 0.9 && r2 > 0.05 && r2 < r1, "Wipe in Feed: Repeats feeds the memory back (repeats %.3f then %.3f, every %.1f s)", r1, r2, D);
+        q.repeats = 0.0f;
+        Engine f; f.prepare (sr);
+        const auto r0 = render (f, q, sr, 4.0, imp);
+        CHECK (maxAbs (r0.wetL, at (0.1 + 2 * D, sr) - 30, at (0.1 + 2 * D, sr) + 30) < 1e-6, "Wipe in Feed with Repeats at 0: no repeats");
+    }
+}
+
+// Wide spread: the main echo to the left, the Spread echo to the right.
+static void testWide()
+{
+    const double sr = 48000.0;
+    const double S = 0.25;
+    Params p = plain (S); p.spread = (float) std::pow (0.125 / kScanMaxSeconds, 1.0 / 2.2); p.wideSpread = true;   // half a Size behind
+    const double sd = spreadSeconds (p.spread, S);
+    CHECK (std::fabs (sd - 0.125) < 1e-9, "test set-up: Spread %.3f s", sd);
+    Engine e; e.prepare (sr);
+    const auto r = render (e, p, sr, 1.5, impulseAt (at (0.1, sr)));
+    const double lMain = maxAbs (r.wetL, at (0.1 + S, sr) - 20, at (0.1 + S, sr) + 20), lSpread = maxAbs (r.wetL, at (0.1 + S + sd, sr) - 20, at (0.1 + S + sd, sr) + 20);
+    const double rMain = maxAbs (r.wetR, at (0.1 + S, sr) - 20, at (0.1 + S, sr) + 20), rSpread = maxAbs (r.wetR, at (0.1 + S + sd, sr) - 20, at (0.1 + S + sd, sr) + 20);
+    CHECK (lMain > 0.9 && lSpread < 1e-6 && rSpread > 0.9 && rMain < 1e-6,
+           "Wide spread: the main echo on the left (%.3f / %.4f), the Spread echo on the right (%.4f / %.3f)", lMain, rMain, lSpread, rSpread);
+    Params q = p; q.spread = 0.0f;
+    Engine f; f.prepare (sr);
+    const auto a = render (f, q, sr, 1.0, impulseAt (at (0.1, sr)));
+    double d = 0.0;
+    for (size_t i = 0; i < a.outL.size(); ++i) d = std::max (d, (double) std::fabs (a.outL[i] - a.outR[i]));
+    CHECK (d == 0.0 && maxAbs (a.wetL) > 0.9, "Wide spread with Spread off: both sides keep the echo (difference %g)", d);
+    std::printf ("m3: Wide spread: main echo left %.2f / right %.2f, Spread echo left %.2f / right %.2f\n", lMain, rMain, lSpread, rSpread);
+}
+
+// Switching any of them while audio plays never clicks; everything stays bounded; sample rates, block sizes, CPU.
+static void testM3Switching()
+{
+    const double sr = 48000.0;
+    auto flip = [] (std::mt19937& g, Params& q, bool heads)
+    {
+        std::uniform_int_distribution<int> which (0, heads ? 10 : 8);
+        switch (which (g))
+        {
+            case 0: q.engage = ! q.engage; break;
+            case 1: q.loop = ! q.loop; break;
+            case 2: q.wipe = ! q.wipe; break;
+            case 3: q.collect = ! q.collect; break;
+            case 4: q.dryKill = ! q.dryKill; break;
+            case 5: q.trails = ! q.trails; break;
+            case 6: q.always = ! q.always; break;
+            case 7: q.wideSpread = ! q.wideSpread; break;
+            case 8: q.memoryDry = (q.memoryDry + 1) % 3; break;
+            case 9: q.scanHold = ! q.scanHold; break;
+            default: q.scanMode = 1 - q.scanMode; break;
+        }
+    };
+    {
+        // 220 Hz, the play heads still: Engage, Loop, Wipe, Collect, Dry kill, Trails, Always, Wide spread, Memory dry
+        Engine e; Params p = plain (0.3); p.repeats = 0.6f; p.spread = 0.2f; p.scanMode = ScanManual; p.scan = 0.0f; e.prepare (sr);
+        std::mt19937 g (91);
+        const auto r = render (e, p, sr, 40.0, sine (sr, 220.0, 0.4f), [&] (long pos, Params& q) { if (pos % 4800 < 256 && pos > 9600) flip (g, q, false); });
+        const double base = 2.0 * kPi * 220.0 / sr * maxAbs (r.outL);
+        CHECK (allFinite (r.outL) && maxStep (r.outL) < 1.4 * base, "every milestone 3 switch flipped 10 times a second on a 220 Hz tone: no clicks (step %.4f, a clean sine %.4f)", maxStep (r.outL), base);
+        std::printf ("m3: every switch flipped 10 times a second for 40 s on 220 Hz: largest step %.4f (the tone's own %.4f)\n", maxStep (r.outL), base);
+    }
+    {
+        // 20 Hz, with Hold to scan and the Scan mode as well (moving play heads are meant to scrub, never to cut)
+        Engine e; Params p = plain (0.3); p.repeats = 0.6f; p.spread = 0.2f; p.scanMode = ScanManual; p.scan = 0.3f; e.prepare (sr); e.seedRandom (4);
+        std::mt19937 g (92);
+        const auto r = render (e, p, sr, 60.0, sine (sr, 20.0, 0.5f), [&] (long pos, Params& q) { if (pos % 4800 < 256) flip (g, q, true); });
+        CHECK (allFinite (r.outL) && maxStep (r.outL) < 0.12, "every milestone 3 switch and Hold to scan flipped for 60 s on a 20 Hz tone: no hard cuts (largest step %.4f)", maxStep (r.outL));
+        std::printf ("m3: every switch and Hold to scan flipped for 60 s on 20 Hz: largest step %.4f (a hard cut would be about 1)\n", maxStep (r.outL));
+    }
+    // bounded: Repeats infinite, Level max, loud input, Loop, Collect, Feed / In with the filter singing, everything flipping
+    double worst = 0.0;
+    for (int routing = 0; routing < 3; ++routing)
+    {
+        Engine e; Params p = modP (plain (0.25), ModFilter, routing, knobAt (0.7f)); p.repeats = 1.0f; p.level = 1.0f; p.spread = 0.3f; p.scan = 1.0f;
+        p.collect = true; p.memoryDry = MemoryDryOn; e.prepare (sr); e.seedRandom (19);
+        std::mt19937 g (100 + routing);
+        std::uniform_real_distribution<float> u (-0.9f, 0.9f);
+        const auto r = render (e, p, sr, 300.0, [&] (long, int) { return u (g); }, [&] (long pos, Params& q) { if (pos % 96000 < 256) flip (g, q, true); });
+        const double m = maxAbs (r.wetL);
+        worst = std::max (worst, m);
+        CHECK (allFinite (r.outL) && allFinite (r.outR) && m < 12.0, "%s, filter singing, Collect, Memory dry On, Repeats infinite, Level max, everything flipping for 5 minutes: bounded (peak %.2f)",
+               routeName (routing), m);
+    }
+    std::printf ("m3: 5 minutes of loud input, Repeats infinite, Level max (+6 dB), Collect, Memory dry On, every switch flipping, each routing: worst peak %.2f\n", worst);
+    {
+        // Loop held for 5 minutes in Feed with Collect: steady and bounded
+        Engine e; Params p = plain (0.3); p.repeats = 1.0f; p.routing = RouteFeed; p.collect = true; p.level = 1.0f; e.prepare (sr);
+        std::mt19937 g (7);
+        std::uniform_real_distribution<float> u (-0.9f, 0.9f);
+        const auto r = render (e, p, sr, 300.0, [&] (long, int) { return u (g); }, [&] (long pos, Params& q) { q.loop = pos > at (2.0, sr); });
+        CHECK (allFinite (r.outL) && maxAbs (r.wetL) < 12.0, "Loop in Feed with Collect, 5 minutes of loud input: bounded (peak %.2f)", maxAbs (r.wetL));
+    }
+    // block sizes: the same sound whatever Logic's block size (switches change between blocks)
+    {
+        auto change = [] (long pos, Params& q)
+        {
+            const long step = pos / 30000;
+            q.engage = step % 7 != 3; q.loop = step % 5 == 2; q.collect = step % 3 == 1; q.wipe = step % 11 == 4; q.wideSpread = step % 2 == 0;
+            q.memoryDry = (int) (step % 3); q.dryKill = step % 4 == 1; q.trails = step % 6 < 3; q.scanHold = step % 9 == 5;
+        };
+        Params p = plain (0.31); p.repeats = 0.7f; p.spread = 0.2f; p.scan = 0.3f; p.scanMode = ScanManual;
+        Engine a; a.prepare (sr); a.seedRandom (77);
+        Engine b; b.prepare (sr); b.seedRandom (77);
+        std::mt19937 g (12);
+        std::uniform_int_distribution<int> u (1, 4096);
+        const auto ra = render (a, p, sr, 30.0, sine (sr, 330.0, 0.4f), change, 250);
+        const auto rb = render (b, p, sr, 30.0, sine (sr, 330.0, 0.4f), change, 256, 2, [&] (long pos) { return (int) std::min<long> (u (g), 30000 - pos % 30000); });
+        double d = 0.0;
+        for (size_t i = 0; i < ra.outL.size(); ++i) d = std::max (d, (double) std::fabs (ra.outL[i] - rb.outL[i]));
+        CHECK (d < 1e-6, "milestone 3 switches: the sound does not depend on Logic's block size (largest difference %.2g)", d);
+    }
+    // sample rates and preparing again while looping, collecting and switched off
+    for (double rate : { 44100.0, 96000.0, 192000.0 })
+    {
+        Engine e; Params p = plain (0.3); p.repeats = 0.6f; p.collect = true; p.wideSpread = true; p.spread = 0.2f; p.memoryDry = MemoryDryOn;
+        e.prepare (rate);
+        auto r = render (e, p, rate, 2.0, sine (rate, 330.0, 0.4f), [&] (long pos, Params& q) { q.loop = pos > (long) rate; });
+        const bool loopOk = allFinite (r.outL) && rms (r.wetL, (long) (1.5 * rate), (long) (2.0 * rate)) > 0.01;
+        e.prepare (rate == 192000.0 ? 44100.0 : rate * 2.0);
+        Params q = p; q.engage = false;
+        const double r2 = rate == 192000.0 ? 44100.0 : rate * 2.0;
+        auto s2 = render (e, q, r2, 1.0, sine (r2, 330.0, 0.4f));
+        CHECK (loopOk && allFinite (s2.outL), "%.0f Hz: Loop, Collect, Wide, Memory dry work; then a new sample rate with Engage off: finite", rate);
+    }
+    // CPU with everything on
+    for (double rate : { 48000.0, 192000.0 })
+    {
+        Engine e; Params p = modP (plain (0.37), ModStability, RouteFeed, knobAt (0.9f)); p.repeats = 1.0f; p.spread = 0.4f; p.scan = 1.0f;
+        p.collect = true; p.memoryDry = MemoryDryOn; p.wideSpread = true; p.wipe = false; e.prepare (rate);
+        const double seconds = 10.0;
+        std::vector<float> L (512), R (512);
+        const auto t0 = std::chrono::steady_clock::now();
+        long done = 0;
+        while (done < (long) (seconds * rate))
+        {
+            for (int i = 0; i < 512; ++i) { L[(size_t) i] = 0.3f * (float) std::sin (0.01 * (done + i)); R[(size_t) i] = L[(size_t) i]; }
+            float* chs[2] = { L.data(), R.data() };
+            p.loop = (done / (long) rate) % 2 == 1;
+            e.setParams (p);
+            e.process (chs, 2, 512);
+            done += 512;
+        }
+        const double pct = std::chrono::duration<double> (std::chrono::steady_clock::now() - t0).count() / seconds * 100.0;
+        std::printf ("m3: engine cpu, everything on (Stability in Feed, Collect, Memory dry, Wide, Loop every other second) at %.0f kHz: %.2f%% of one core\n", rate / 1000.0, pct);
+        CHECK (pct < 10.0, "CPU with everything on at %.0f Hz is %.2f%% of one core", rate, pct);
+    }
+}
+
+static void testM3()
+{
+    testM3SameAs020();
+    testEngage();
+    testLoop();
+    testHoldToScan();
+    testCollect();
+    testWipeAndMemoryDry();
+    testWide();
+    testM3Switching();
+}
+
+int main (int argc, char** argv)
+{
+    if (argc > 1 && std::string (argv[1]) == "m3")        // (for working on milestone 3 alone)
+    {
+        testM3();
+        std::printf ("engine tests: %d checks, %d failed\n", checks, failures);
+        return failures == 0 ? 0 : 1;
+    }
     testCurves();
     testClassicDelay();
     testSync();
@@ -1187,6 +1722,7 @@ int main()
     testDefaults();
     testCpu();
     testM2();
+    testM3();
     std::printf ("engine tests: %d checks, %d failed\n", checks, failures);
     return failures == 0 ? 0 : 1;
 }

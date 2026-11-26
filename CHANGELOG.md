@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.3.0 — milestone 3 (built, waiting for the Logic test on the Intel Mac)
+
+- **Engage, Loop, Hold to scan, Preset Left / Live / Right with Save left / Save right, the options (Collect, Wipe,
+  Always, Latch, Dry kill, Trails, Wide spread) and Memory dry (Scanning / Off / On)** are live (their M3 tags removed;
+  nothing else on the panel changed). The control list is unchanged (24 controls).
+- **Engage**: off = the dry sound only; turning it off empties the memory unless Collect or Always is on; Always keeps
+  recording while off; Collect pauses the memory and keeps its audio; Trails lets the echoes fade out (re-engaging clears
+  them unless Collect or Always); Repeats is limited while off.
+- **Loop**: freezes the echo (an exact copy every pass); held, or latched with Latch; automatable. Size changes become the
+  loop's length when the knob rests. **Hold to scan**: Auto Scan at maximum while held, snapping back when let go.
+- **Collect** layers the memory every 3 minutes; **Wipe** mutes the echo and lets the memory be heard (in Feed, Repeats
+  feeds it back); **Memory dry**; **Dry kill**; **Wide spread** (main echo left, Spread echo right).
+- **Presets**: two snapshots saved with the project; switching is heard at once (also by automation), the controls then
+  show the snapshot; Live brings the settings from before back.
+- Every switch fades (no clicks). With the new controls at rest the sound is bit for bit 0.2.0's (proved against the
+  unchanged 0.2.0 engine in the self-test). Projects from 0.1.0 and 0.2.0 load with empty preset slots; Memory dry was
+  stored as Scanning (the pedal's default), so moving Scan now also plays the memory directly (Off = the 0.2.0 sound).
+- Engine self-test: 386 checks. Plugin-layer check: 137 checks, plus a panel picture with the milestone 3 controls on.
+
 ## 0.2.0 — milestone 2 (built and tested in Logic 2026-11-25)
 
 - **Modify, Bank A / Off / B, Modifier 1 / 2 / 3, Routing In / Out / Feed** are live, with the modifier read-out on the

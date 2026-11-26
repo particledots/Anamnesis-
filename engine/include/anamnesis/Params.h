@@ -3,8 +3,9 @@
 //
 // The full control list (all milestones) is fixed in build 1; see plugin/Source/Parameters.h for ids and order.
 // Milestone 1 makes these work: Level, Repeats, Size (free and synced to Logic's tempo), Spread, Scan (Auto and Manual),
-// Clear memory. Milestone 2 adds Modify, Bank, Modifier and Routing (the six modifiers). Everything else is stored and
-// ignored until its milestone.
+// Clear memory. Milestone 2 adds Modify, Bank, Modifier and Routing (the six modifiers). Milestone 3 adds Engage, Loop,
+// Hold to scan and the options (see Engine.h); the Preset switch is handled by the plugin (it chooses which settings the
+// engine is given).
 //
 // All curves here are our own first guesses, drawn through the landmarks in the Habit guide. They can be retuned by ear
 // later without touching a control id.

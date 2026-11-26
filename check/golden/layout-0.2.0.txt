@@ -1,0 +1,24 @@
+0 level v1 | Level | range 0.0000..1.0000 step 0.0000 | default 0.500000
+1 repeats v1 | Repeats | range 0.0000..1.0000 step 0.0000 | default 0.400000
+2 size v1 | Size | range 0.0000..1.0000 step 0.0000 | default 0.300145
+3 sizeMode v1 | Size mode | range 0.0000..1.0000 step 1.0000 | default 0.000000 | choices Free;Sync
+4 modify v1 | Modify | range 0.0000..1.0000 step 0.0000 | default 0.500000
+5 spread v1 | Spread | range 0.0000..1.0000 step 0.0000 | default 0.000000
+6 scan v1 | Scan | range 0.0000..1.0000 step 0.0000 | default 0.000000
+7 scanMode v1 | Scan mode | range 0.0000..1.0000 step 1.0000 | default 0.000000 | choices Auto;Manual
+8 bank v1 | Modifier bank | range 0.0000..2.0000 step 1.0000 | default 1.000000 | choices A;Off;B
+9 modifier v1 | Modifier | range 0.0000..2.0000 step 1.0000 | default 0.000000 | choices 1;2;3
+10 routing v1 | Routing | range 0.0000..2.0000 step 1.0000 | default 1.000000 | choices In;Out;Feed
+11 preset v1 | Preset | range 0.0000..2.0000 step 1.0000 | default 1.000000 | choices Left;Live;Right
+12 engage v1 | Engage | range 0.0000..1.0000 step 1.0000 | default 1.000000 | switch
+13 loop v1 | Loop | range 0.0000..1.0000 step 1.0000 | default 0.000000 | switch
+14 scanHold v1 | Hold to scan | range 0.0000..1.0000 step 1.0000 | default 0.000000 | switch
+15 clearMemory v1 | Clear memory | range 0.0000..1.0000 step 1.0000 | default 0.000000 | switch
+16 collect v1 | Collect | range 0.0000..1.0000 step 1.0000 | default 0.000000 | switch
+17 wipe v1 | Wipe | range 0.0000..1.0000 step 1.0000 | default 0.000000 | switch
+18 always v1 | Always | range 0.0000..1.0000 step 1.0000 | default 0.000000 | switch
+19 latch v1 | Latch | range 0.0000..1.0000 step 1.0000 | default 0.000000 | switch
+20 dryKill v1 | Dry kill | range 0.0000..1.0000 step 1.0000 | default 0.000000 | switch
+21 trails v1 | Trails | range 0.0000..1.0000 step 1.0000 | default 0.000000 | switch
+22 memoryDry v1 | Memory dry | range 0.0000..2.0000 step 1.0000 | default 0.000000 | choices Scanning;Off;On
+23 wideSpread v1 | Wide spread | range 0.0000..1.0000 step 1.0000 | default 0.000000 | switch

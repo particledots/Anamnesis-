@@ -18,6 +18,14 @@ namespace
     constexpr double kInputFadeSeconds = 0.005;      // after a Clear (and at the start) the input fades into the memory
     constexpr float  kInputLimit = 64.0f;            // anything louder (or not a number) coming in is treated as a fault
     constexpr double kRoutingRampSeconds = 0.020;    // In / Out / Feed: the feedback paths cross over in this time
+    // Milestone 3
+    constexpr double kSwitchSeconds = 0.020;         // Engage, Trails, Dry kill, Loop, Collect, Wipe, Wide spread: fade time
+    constexpr double kRecordFadeSeconds = 0.005;     // the input fading out of (and back into) the memory around a pause
+    constexpr double kMemDryFadeSeconds = 0.030;     // Memory dry fading in and out
+    constexpr double kMemDryHoldSeconds = 0.150;     // Memory dry Scanning: heard this long after a play head stops
+    constexpr float  kOffFeedbackMax = 0.85f;        // Engage off: Repeats is limited so trails (and Always) never stack up
+    constexpr double kFeedDryNear = 0.025, kFeedDryFar = 0.050;   // Wipe in Feed: play heads nearer than this are not fed back
+    constexpr double kLoopSettleSeconds = 0.100;     // Loop: a new Size becomes the loop's length once Size has been still this long
 
     inline float crossfadeGain (float t)              // 0..1, smooth at both ends; the two gains always add up to 1
     {
@@ -55,6 +63,7 @@ bool Engine::prepare (double newRate)
     for (int c = 0; c < 2; ++c)
     {
         ok = memory[c].prepare (kMemorySeconds + 1.0, sampleRate, stride) && ok;
+        memory[c].setLayerPeriod (kMemorySeconds, sampleRate);            // Collect: what was recorded 3 minutes ago
         ok = echo[c].prepare (kSizeMaxSeconds + 1.0, sampleRate, 1) && ok;
         dc[c].setUp (sampleRate);
         dcFeed[c].setUp (sampleRate);
@@ -70,6 +79,14 @@ bool Engine::prepare (double newRate)
     feedback.jumpTo (repeatsFeedback (params.repeats));
     spreadGain.jumpTo (spreadOn (params.spread) ? 1.0f : 0.0f);
     loopFeedback.step = memoryFeed.step = (float) (1.0 / (kRoutingRampSeconds * sampleRate));
+    for (Ramp* r : { &engageGain, &echoOn, &dryGain, &loopGain, &layerGain, &unwiped, &wideGain })
+        r->step = (float) (1.0 / (kSwitchSeconds * sampleRate));
+    recordGain.step = (float) (1.0 / (kRecordFadeSeconds * sampleRate));
+    memDryGain.step = (float) (1.0 / (kMemDryFadeSeconds * sampleRate));
+    memDryHoldSamples = (int) std::lround (kMemDryHoldSeconds * sampleRate);
+    loopSettleSamples = (int) std::lround (kLoopSettleSeconds * sampleRate);
+    memDryHold = 0;
+    dumpWhenSilent = killEchoWhenSilent = false;
 
     headJumpStep  = (float) (1.0 / (kJumpSeconds * sampleRate));
     echoFadeStep  = (float) (1.0 / (kJumpSeconds * sampleRate));
@@ -83,6 +100,7 @@ bool Engine::prepare (double newRate)
     const double size = sizeSeconds (params) * sampleRate;
     taps = EchoTaps {};
     taps.delay[0] = taps.delay[1] = size;
+    loopTaps = LoopTaps {};
     trip = Trip::Home;
     echoClock = 0.0;
     fresh = true;
@@ -135,10 +153,21 @@ float Engine::readHead (const Head& h, int c) const
     return (1.0f - g) * at (h.from) + g * at (h.at);
 }
 
+bool Engine::startTrip (double size)
+{
+    const double depth = autoScanDepthSeconds (scanKnob);
+    const double raw = size + randomUnit() * std::max (0.0, depth - size);
+    const double target = std::min (depth, snapToSize (raw, size));
+    if (target < 0.05) return false;
+    tripTarget = target;
+    trip = Trip::Travel;
+    return true;
+}
+
 void Engine::stepAutoScan()
 {
     const double size = sizeSeconds (params);
-    if (! autoScanOn (params.scan))
+    if (! autoScanOn (scanKnob))
     {
         if (trip != Trip::Home)
         {
@@ -150,17 +179,8 @@ void Engine::stepAutoScan()
     switch (trip)
     {
         case Trip::Home:
-            if (randomUnit() < autoScanChance (params.scan))
-            {
-                const double depth = autoScanDepthSeconds (params.scan);
-                const double raw = size + randomUnit() * std::max (0.0, depth - size);
-                const double target = std::min (depth, snapToSize (raw, size));
-                if (target >= 0.05)
-                {
-                    tripTarget = target;
-                    trip = Trip::Travel;
-                }
-            }
+            if (randomUnit() < autoScanChance (scanKnob))
+                startTrip (size);
             break;
         case Trip::Travel:
             break;                                        // arrival is checked every sample
@@ -187,23 +207,38 @@ void Engine::writePicture (float v)
 
 void Engine::doClear()
 {
+    clearMemoryOnly();
+    clearEchoOnly();
+}
+
+// The memory alone (Engage off without Collect or Always: the trails, if any, keep sounding).
+void Engine::clearMemoryOnly()
+{
     for (int c = 0; c < 2; ++c)
     {
         memory[c].clearAll();
+        dcFeed[c] = dsp::DcBlocker {};
+        dcFeed[c].setUp (sampleRate);
+    }
+    inputFade = 0.0f;
+    slicePeak = 0.0f;
+    sliceCount = 0.0;
+    pic.recorded.store (0, std::memory_order_relaxed);
+}
+
+// The echo alone (Engage off without Trails, once it is silent).
+void Engine::clearEchoOnly()
+{
+    for (int c = 0; c < 2; ++c)
+    {
         echo[c].clearAll();
         dc[c] = dsp::DcBlocker {};
         dc[c].setUp (sampleRate);
-        dcFeed[c] = dsp::DcBlocker {};
-        dcFeed[c].setUp (sampleRate);
     }
     slotIn.clearHistory();
     slotOut.clearHistory();
     slotIn.reset();                                       // (the modifier fades back in; the echo is silent by now anyway)
     slotOut.reset();
-    inputFade = 0.0f;
-    slicePeak = 0.0f;
-    sliceCount = 0.0;
-    pic.recorded.store (0, std::memory_order_relaxed);
 }
 
 void Engine::process (float* const* ch, int numCh, int n)
@@ -213,17 +248,21 @@ void Engine::process (float* const* ch, int numCh, int n)
     const int nc = numCh >= 2 ? 2 : 1;
 
     // ---- this block's settings
+    // Hold to scan: as if Scan were Auto at maximum, whatever the knob and the Scan mode say.
+    const bool hold = params.scanHold;
+    scanKnob = hold ? 1.0f : params.scan;
     const double size = sizeSeconds (params);
     const double sizeSamples = size * sampleRate;
     const double memLatency = memory[0].minDelay();       // the play heads read this many samples behind the write point
-    const bool manual = params.scanMode == ScanManual;
+    const bool manual = ! hold && params.scanMode == ScanManual;
     const double manualTarget = scanManualSeconds (params.scan, size);
     const double spreadDistance = spreadSeconds (params.spread, size);
-    const double travelSpeed = autoScanTravelSpeed (params.scan);
+    const double travelSpeed = autoScanTravelSpeed (scanKnob);
     const double followSpeed = kScanGlideSpeed + 24.0;    // the secondary head keeps up with any primary travel
     const double echoLo = echo[0].minDelay(), echoHi = echo[0].maxDelay();
+    const bool engaged = params.engage;
     level.target = levelGain (params.level);
-    feedback.target = repeatsFeedback (params.repeats);
+    feedback.target = engaged ? repeatsFeedback (params.repeats) : std::min (repeatsFeedback (params.repeats), kOffFeedbackMax);
     spreadGain.target = spreadOn (params.spread) ? 1.0f : 0.0f;
     if (manual && trip != Trip::Home) trip = Trip::Home;
     if (clearRequested.exchange (false, std::memory_order_acq_rel))
@@ -240,6 +279,47 @@ void Engine::process (float* const* ch, int numCh, int n)
     loopFeedback.target = routing == RouteFeed ? 0.0f : 1.0f;
     memoryFeed.target   = routing == RouteFeed ? 1.0f : 0.0f;
 
+    // ---- milestone 3: Engage, the options, Loop
+    const bool wipe = params.wipe;
+    const bool keepMemory = params.collect || params.always;
+    if (! fresh && engaged != lastEngaged)
+    {
+        if (! engaged)
+        {
+            dumpWhenSilent = ! keepMemory;                // the pedal: turning it off empties the memory ..
+            killEchoWhenSilent = ! params.trails;         // .. and the echo stops (Trails: it fades out by itself)
+        }
+        else
+        {
+            dumpWhenSilent = killEchoWhenSilent = false;
+            if (params.trails && ! keepMemory) clearing = true;     // trails still sounding are interrupted and cleared
+        }
+    }
+    lastEngaged = engaged;
+    engageGain.target = engaged ? 1.0f : 0.0f;
+    echoOn.target     = engaged || params.trails ? 1.0f : 0.0f;
+    dryGain.target    = params.dryKill && engaged ? 0.0f : 1.0f;
+    loopGain.target   = params.loop && engaged ? 1.0f : 0.0f;
+    // Collect layers the memory; while Engage is off with Always on, it records plainly (the pedal's safety)
+    layerGain.target  = params.collect && (engaged || ! params.always) ? 1.0f : 0.0f;
+    unwiped.target    = wipe ? 0.0f : 1.0f;
+    wideGain.target   = params.wideSpread && nc == 2 ? 1.0f : 0.0f;
+    recordGain.target = engaged || params.always ? 1.0f : 0.0f;
+    const int memDryMode = wipe ? (int) MemoryDryOn : std::clamp (params.memoryDry, 0, 2);
+    // Collect with Trails, Engage off: the memory keeps moving on (keeping its audio) instead of pausing
+    const bool rollWhenOff = params.collect && params.trails && ! params.always;
+
+    // Hold to scan: pressed, a trip into the past starts at once; released, the play head snaps back to the knob's setting
+    if (! fresh && hold && ! lastHold && trip == Trip::Home)
+        startTrip (size);
+    if (! fresh && ! hold && lastHold)
+    {
+        const double back = manual ? manualTarget : 0.0;
+        if (! primary.jumping() && std::fabs (primary.at - back) > 1.0e-4) primary.jumpTo (back);
+        trip = Trip::Home;
+    }
+    lastHold = hold;
+
     // ---- Size in Sync while Logic plays: the Size grid follows Logic's beats
     if (params.sizeMode == SizeSync && params.hostPlaying && params.hostBeats >= 0.0 && std::isfinite (params.hostBeats))
     {
@@ -254,6 +334,7 @@ void Engine::process (float* const* ch, int numCh, int n)
             if (std::fabs (diff) > 2.0) echoClock = std::clamp (want, 0.0, std::max (0.0, sizeSamples - 1.0));
         }
     }
+    const double loopPeriod = std::max (echoLo + 2.0, std::round (sizeSamples));
     if (fresh)
     {
         // The first block after prepare: the play heads start where they belong (nothing to glide or jump from yet),
@@ -272,6 +353,13 @@ void Engine::process (float* const* ch, int numCh, int n)
         level.jumpTo (level.target);
         feedback.jumpTo (feedback.target);
         spreadGain.jumpTo (spreadGain.target);
+        for (Ramp* r : { &engageGain, &echoOn, &dryGain, &loopGain, &layerGain, &unwiped, &wideGain, &recordGain })
+            r->value = r->target;
+        memDryGain.value = memDryGain.target = memDryMode == MemoryDryOn ? 1.0f : 0.0f;
+        loopTaps = LoopTaps {};
+        loopTaps.period[0] = loopTaps.period[1] = loopPeriod;
+        lastPrimaryAt = primary.at;
+        lastSecondaryAt = secondary.at;
     }
 
     for (int i = 0; i < n; ++i)
@@ -296,6 +384,34 @@ void Engine::process (float* const* ch, int numCh, int n)
         {
             taps.fade = std::min (1.0f, taps.fade + echoFadeStep);
             if (taps.fade >= 1.0f) taps.hold = sizeHoldSamples;
+        }
+
+        // ---- Loop's own period (a whole number of samples, so every pass is an exact copy). Not looping: it simply follows
+        // Size; looping: once Size has settled, the loop crossfades to the new length (each change is a splice that stays in
+        // the loop, so a sweep of the knob makes one splice, not dozens).
+        const float lg = loopGain.next();
+        if (loopPeriod != loopTaps.seen) { loopTaps.seen = loopPeriod; loopTaps.still = 0; }
+        else if (loopTaps.still < loopSettleSamples) ++loopTaps.still;
+        if (lg <= 0.0f)
+        {
+            loopTaps.period[0] = loopTaps.period[1] = loopPeriod;
+            loopTaps.fade = 1.0f;
+            loopTaps.hold = 0;
+        }
+        else if (loopTaps.fade >= 1.0f)
+        {
+            if (loopTaps.hold > 0) --loopTaps.hold;
+            else if (loopTaps.period[loopTaps.active] != loopPeriod && loopTaps.still >= loopSettleSamples)
+            {
+                loopTaps.active = 1 - loopTaps.active;
+                loopTaps.period[loopTaps.active] = loopPeriod;
+                loopTaps.fade = 0.0f;
+            }
+        }
+        else
+        {
+            loopTaps.fade = std::min (1.0f, loopTaps.fade + echoFadeStep);
+            if (loopTaps.fade >= 1.0f) loopTaps.hold = sizeHoldSamples;
         }
 
         // ---- auto scan: a dice at the end of every echo
@@ -344,6 +460,36 @@ void Engine::process (float* const* ch, int numCh, int n)
             clearFade = std::min (1.0f, clearFade + clearFadeStep);
         if (inputFade < 1.0f) inputFade = std::min (1.0f, inputFade + inputFadeStep);
 
+        // ---- milestone 3 fades, and what Engage off empties once it is silent
+        const float eg = engageGain.next(), eo = echoOn.next(), dg = dryGain.next(), ly = layerGain.next();
+        const float uw = unwiped.next(), wg = wideGain.next(), rg = recordGain.next();
+        if (memDryMode == MemoryDryScanning)
+        {
+            const bool moving = primary.jumping() || primary.at != lastPrimaryAt
+                                || (spreadGain.value > 1.0e-4f && (secondary.jumping() || secondary.at != lastSecondaryAt));
+            if (moving) memDryHold = memDryHoldSamples;
+            else if (memDryHold > 0) --memDryHold;
+            memDryGain.target = memDryHold > 0 ? 1.0f : 0.0f;
+        }
+        else
+            memDryGain.target = memDryMode == MemoryDryOn ? 1.0f : 0.0f;
+        lastPrimaryAt = primary.at;
+        lastSecondaryAt = secondary.at;
+        const float md = memDryGain.next();
+        if (dumpWhenSilent && eg <= 0.0f && rg <= 0.0f)
+        {
+            clearMemoryOnly();
+            dumpWhenSilent = false;
+        }
+        if (killEchoWhenSilent && eo <= 0.0f)
+        {
+            clearEchoOnly();
+            killEchoWhenSilent = false;
+        }
+        // Engage off: the memory pauses once the input has faded out of it (Always: it keeps recording; Collect with Trails:
+        // it keeps moving on, layering nothing new)
+        const bool memoryMoves = engaged || rg > 0.0f || eg > 0.0f || params.always || rollWhenOff;
+
         const float lv = level.next() * clearFade;
         const float fb = feedback.next();
         const float sg = spreadGain.next();
@@ -359,13 +505,19 @@ void Engine::process (float* const* ch, int numCh, int n)
         slotIn.advance (phase);
         slotOut.advance (phase);
 
+        // Wipe in Feed: the memory heard directly is what Repeats feeds back (play heads very near now are left out)
+        auto nearGate = [] (double at) { return (float) std::clamp ((at - kFeedDryNear) / (kFeedDryFar - kFeedDryNear), 0.0, 1.0); };
+        const float gP = uw < 1.0f ? nearGate (primary.at) : 0.0f, gS = uw < 1.0f ? nearGate (secondary.at) : 0.0f;
+
+        // 1) the echo's output and feedback (read before anything is written this sample), and the memory's recording
+        float xs[2], heardC[2], backC[2];
         float peak = 0.0f;
         for (int c = 0; c < nc; ++c)
         {
             float x = ch[c][i];
             if (! std::isfinite (x) || std::fabs (x) > kInputLimit) x = 0.0f;
+            xs[c] = x;
 
-            // the echo's output and feedback (read before anything is written this sample)
             auto& e = echo[c];
             float out, back;
             if (taps.fade < 1.0f)
@@ -378,32 +530,77 @@ void Engine::process (float* const* ch, int numCh, int n)
                 out = e.read (outTap (na));
                 back = e.read (fbTap (na));
             }
-            const float heard = slotOut.process (c, out);
+            const float heard = slotOut.process (c, out) * eo * uw;
+            heardC[c] = heard;
+            backC[c] = back;
 
             // the memory records the input (and, in Feed, Repeats x the echo that is heard)
             float rec = x * inputFade;
-            const float fedBack = dsp::softLimit (dcFeed[c].process (fb * heard * clearFade));
+            float toFeed = heard;
+            if (uw < 1.0f) toFeed += (1.0f - uw) * eg * (gP * lastHeadP[c] + sg * gS * lastHeadS[c]);
+            const float fedBack = dsp::softLimit (dcFeed[c].process (fb * toFeed * clearFade));
             if (mf > 0.0f) rec += mf * fedBack;
-            memory[c].write (rec);
-            peak = std::max (peak, std::fabs (rec));
+            rec *= rg;
+            if (memoryMoves)
+            {
+                memory[c].write (rec, ly);
+                peak = std::max (peak, std::fabs (rec));
+            }
+        }
 
-            float heads = readHead (primary, c);
-            if (sg > 0.0f) heads += sg * readHead (secondary, c);
+        // 2) the play heads, both channels (Wide spread pans the main head left and the Spread head right)
+        float headP[2] = { 0.0f, 0.0f }, headS[2] = { 0.0f, 0.0f }, heads[2] = { 0.0f, 0.0f };
+        for (int c = 0; c < nc; ++c)
+        {
+            headP[c] = readHead (primary, c);
+            heads[c] = headP[c];
+            if (sg > 0.0f)
+            {
+                headS[c] = readHead (secondary, c);
+                heads[c] += sg * headS[c];
+            }
+            lastHeadP[c] = headP[c];
+            lastHeadS[c] = headS[c];
+        }
+        const float w = wg * sg;
+        if (w > 0.0f)
+        {
+            const float mP = 0.5f * (headP[0] + headP[1]), mS = 0.5f * (headS[0] + headS[1]);
+            heads[0] = (1.0f - w) * heads[0] + w * mP;
+            heads[1] = (1.0f - w) * heads[1] + w * sg * mS;
+        }
 
-            const float fed = dsp::softLimit (dc[c].process (fb * back));
-            e.write (slotIn.process (c, heads + lf * fed));
+        // 3) into the echo, and out
+        const float lpFade = loopTaps.fade < 1.0f ? crossfadeGain (loopTaps.fade) : 1.0f;
+        for (int c = 0; c < nc; ++c)
+        {
+            auto& e = echo[c];
+            const float fed = dsp::softLimit (dc[c].process (fb * backC[c]));
+            float toEcho = slotIn.process (c, heads[c] * eg + lf * fed);
+            if (lg > 0.0f)
+            {
+                // Loop: the echo copies itself, exactly one period back; nothing new goes in
+                const auto& L = loopTaps;
+                float copy = e.read (L.period[L.active] - 1.0);
+                if (L.fade < 1.0f) copy = (1.0f - lpFade) * e.read (L.period[1 - L.active] - 1.0) + lpFade * copy;
+                toEcho = lg >= 1.0f ? copy : toEcho + lg * (copy - toEcho);      // fully looping: an exact copy
+            }
+            e.write (toEcho);
 
-            ch[c][i] = x + lv * heard;
+            ch[c][i] = dg * xs[c] + lv * (heardC[c] + md * eg * heads[c]);
         }
 
         // ---- the picture of the memory
-        slicePeak = std::max (slicePeak, peak);
-        sliceCount += 1.0;
-        if (sliceCount >= sliceLength)
+        if (memoryMoves)
         {
-            sliceCount -= sliceLength;
-            writePicture (slicePeak);
-            slicePeak = 0.0f;
+            slicePeak = std::max (slicePeak, peak);
+            sliceCount += 1.0;
+            if (sliceCount >= sliceLength)
+            {
+                sliceCount -= sliceLength;
+                writePicture (slicePeak);
+                slicePeak = 0.0f;
+            }
         }
     }
 
@@ -417,8 +614,11 @@ void Engine::process (float* const* ch, int numCh, int n)
     disp.modifierInEffect.store (inEffect, std::memory_order_relaxed);
     disp.noteIndex.store (params.sizeMode == SizeSync ? noteIndexUsed (params.size, params.bpm, params.beatsPerBar) : -1,
                           std::memory_order_relaxed);
-    const double reach = manual ? manualTarget : (autoScanOn (params.scan) ? autoScanDepthSeconds (params.scan) : 0.0);
-    tail.store (std::min (kTailCapSeconds, echoTailSeconds (size, feedback.target) + reach + spreadDistance),
-                std::memory_order_relaxed);
+    disp.looping.store (loopGain.value > 0.0f, std::memory_order_relaxed);
+    disp.memoryRecording.store (engaged || params.always || rollWhenOff || recordGain.value > 0.0f, std::memory_order_relaxed);
+    disp.memoryDryGain.store (memDryGain.value, std::memory_order_relaxed);
+    const double reach = manual ? manualTarget : (autoScanOn (scanKnob) ? autoScanDepthSeconds (scanKnob) : 0.0);
+    const double echoTail = loopGain.target > 0.0f ? kTailCapSeconds : echoTailSeconds (size, feedback.target);
+    tail.store (std::min (kTailCapSeconds, echoTail + reach + spreadDistance), std::memory_order_relaxed);
 }
 }

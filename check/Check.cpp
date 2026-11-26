@@ -15,6 +15,12 @@
 //   8. Milestone 2: Modify's read-out in Logic follows Bank and Modifier; the panel's Modify text and modifier read-out
 //      (and that they fit their places for every modifier); Modify 12:00 = Bank Off bit for bit through the plugin;
 //      Bank, Modifier, Routing and Modify automated hard without clicks; Size in Sync lining up with Logic's beats.
+//   9. Milestone 3: every control live and no milestone tag left on the panel (checked in the drawn pixels); Engage by
+//      automation (dry only, exactly), Dry kill; Loop held on the panel (and latched with Latch), Hold to scan held;
+//      the presets: Save left / right, Left / Right heard at once when the switch is automated (no panel), the controls
+//      then showing the snapshot, Live bringing back the settings from before, an empty slot playing Live, saved with
+//      the project (and projects from 0.1.0 and 0.2.0 loading with empty slots); switching presets, Engage, Loop and
+//      the options by automation while a tone plays: no clicks; bypass and transport with Loop and Collect on.
 //
 // The build workflow runs it on every push and fails if any check fails. "--snapshot <folder>" writes pictures of the panel.
 
@@ -439,17 +445,28 @@ static void testPanel()
     if (ed == nullptr) return;
     auto& panel = ed->getPanel();
 
-    // Dimmed (milestone 3) and live controls
-    for (const char* id : { "preset", "engage", "loop", "scanHold", "collect", "wipe", "always",
+    // Every control is live (milestone 3: nothing dimmed any more)
+    for (const char* id : { "sizeMode", "scanMode", "Tap", "Clear memory", "bank", "modifier", "routing",
+                            "preset", "engage", "loop", "scanHold", "collect", "wipe", "always",
                             "latch", "dryKill", "trails", "wideSpread", "memoryDry", "Save left", "Save right" })
     {
         auto* c = findById (panel, id);
-        CHECK (c != nullptr && ! c->isEnabled() && std::fabs (c->getAlpha() - dimAlpha) < 0.01f, "%s is dimmed", id);
-    }
-    for (const char* id : { "sizeMode", "scanMode", "Tap", "Clear memory", "bank", "modifier", "routing" })
-    {
-        auto* c = findById (panel, id);
         CHECK (c != nullptr && c->isEnabled() && c->getAlpha() > 0.99f, "%s is live", id);
+    }
+    {
+        // no milestone tag is drawn any more: no tag amber in the places the M3 tags were (Preset, the big buttons, Options)
+        const auto img = ed->createComponentSnapshot (ed->getLocalBounds(), true, 1.0f);
+        const float s = (float) ed->getWidth() / (float) panelW;
+        int amber = 0;
+        struct R { int x, y; } tags[5] = { { 440, 276 }, { 108, 448 }, { 238, 448 }, { 498, 448 }, { 68, 490 } };
+        for (const auto& t : tags)
+            for (int y = t.y; y < t.y + 16; ++y)
+                for (int x = t.x; x < t.x + 24; ++x)
+                {
+                    const auto c = img.getPixelAt ((int) ((float) x * s), (int) ((float) y * s));
+                    if (c.getRed() > 200 && c.getGreen() > 130 && c.getGreen() < 210 && c.getBlue() < 140) ++amber;
+                }
+        CHECK (amber == 0, "no milestone tags left on the panel (%d tag-coloured pixels where they were)", amber);
     }
     int liveKnobs = 0, dimKnobs = 0;
     for (auto* c : panel.getChildren())
@@ -637,6 +654,196 @@ static void testModifiers()
     }
 }
 
+
+// ------------------------------------------------------------------------------------------------ 9. milestone 3
+
+static double maxStepOf (const std::vector<float>& v, size_t from = 1)
+{
+    double m = 0.0;
+    for (size_t i = std::max<size_t> (1, from); i < v.size(); ++i) m = std::max (m, (double) std::fabs (v[i] - v[i - 1]));
+    return m;
+}
+
+static void testMilestone3()
+{
+    using namespace AnmStyle;
+    const double sr = 48000.0;
+    // Engage by automation: off = the dry sound exactly; Dry kill mutes the dry sound while engaged
+    {
+        Runner r (sr);
+        r.run (1.0, tone (sr, 300.0, 0.4f));
+        setReal (param (r.proc, "engage"), 0.0f);
+        r.outL.clear(); r.inL.clear();
+        r.run (1.0, tone (sr, 300.0, 0.4f));
+        CHECK (r.wetMax (0.03, 1.0) == 0.0, "Engage off by automation: only the dry sound, exactly (%.6f)", r.wetMax (0.03, 1.0));
+        setReal (param (r.proc, "engage"), 1.0f);
+        setReal (param (r.proc, "dryKill"), 1.0f);
+        r.outL.clear(); r.inL.clear();
+        r.run (0.4, tone (sr, 300.0, 0.4f));
+        double dry = 0.0;
+        for (size_t i = (size_t) (0.03 * sr); i < (size_t) (0.4 * sr); ++i) dry = std::max (dry, (double) std::fabs (r.outL[i]));
+        CHECK (dry < 1e-6, "Dry kill: while engaged only the echo is heard (before the first echo: %.6f)", dry);
+    }
+    // The panel: Loop held (momentary), latched with Latch; Hold to scan held; Save left / right
+    {
+        AnamnesisAudioProcessor p;
+        std::unique_ptr<juce::AudioProcessorEditor> edBase (p.createEditor());
+        auto& panel = dynamic_cast<AnamnesisAudioProcessorEditor&> (*edBase).getPanel();
+        auto* loop = panel.getLoopButton();
+        auto* hold = panel.getHoldButton();
+        CHECK (loop != nullptr && hold != nullptr, "the panel has Loop and Hold to scan");
+        if (loop != nullptr && hold != nullptr)
+        {
+            loop->press();
+            const bool heldOn = realValue (param (p, "loop")) > 0.5f;
+            loop->release();
+            const bool letGoOff = realValue (param (p, "loop")) < 0.5f;
+            CHECK (heldOn && letGoOff, "Loop (Latch off): on while held, off when let go (%d %d)", heldOn, letGoOff);
+            setReal (param (p, "latch"), 1.0f);
+            loop->press(); loop->release();
+            const bool latched = realValue (param (p, "loop")) > 0.5f;
+            loop->press(); loop->release();
+            CHECK (latched && realValue (param (p, "loop")) < 0.5f, "Loop with Latch: a click switches it on, the next one off");
+            hold->press();
+            const bool holdOn = realValue (param (p, "scanHold")) > 0.5f;
+            hold->release();
+            CHECK (holdOn && realValue (param (p, "scanHold")) < 0.5f, "Hold to scan: on while held, off when let go");
+        }
+        auto* saveL = dynamic_cast<AnmButton*> (findById (panel, "Save left"));
+        setReal (param (p, "level"), 0.81f);
+        if (saveL != nullptr && saveL->onPress) saveL->onPress();
+        CHECK (p.slotFilled (0) && std::fabs (p.slotValue (0, 0) - 0.81f) < 1e-6f && ! p.slotFilled (1), "Save left stores the current settings (Level %.2f)", p.slotValue (0, 0));
+    }
+    // Presets: heard at once when the switch is automated (no panel, no message thread), then shown by the controls
+    {
+        Runner r (sr);
+        setReal (param (r.proc, "repeats"), 0.0f);
+        setReal (param (r.proc, "level"), 0.3f);                       // Live: a quiet echo
+        setReal (param (r.proc, "size"), anm::sizeKnobForSeconds (0.2));
+        r.proc.saveSlot (1);                                           // Right: the same, ..
+        setReal (param (r.proc, "level"), 1.0f);                       // .. Left: a loud echo, Wide spread on, Collect on
+        setReal (param (r.proc, "wideSpread"), 1.0f);
+        setReal (param (r.proc, "collect"), 1.0f);
+        r.proc.saveSlot (0);
+        setReal (param (r.proc, "level"), 0.3f);
+        setReal (param (r.proc, "wideSpread"), 0.0f);
+        setReal (param (r.proc, "collect"), 0.0f);
+        setReal (param (r.proc, "scan"), 0.37f);                       // a Live-only setting, to see it come back
+        r.run (0.5, tone (sr, 300.0, 0.4f));
+        const double liveLevel = r.wetRms (0.3, 0.5);
+        setReal (param (r.proc, "preset"), (float) anm::PresetLeft);
+        r.run (0.5, tone (sr, 300.0, 0.4f));
+        const double leftLevel = r.wetRms (0.8, 1.0);
+        const auto heard = r.proc.readParams();
+        CHECK (leftLevel > 5.0 * liveLevel && heard.wideSpread && heard.collect, "Preset Left automated: heard at once, before the controls move (echo %.3f, Live %.3f)", leftLevel, liveLevel);
+        CHECK (! r.proc.presetApplied() && std::fabs (realValue (param (r.proc, "level")) - 0.3f) < 1e-6f, "(the controls have not moved yet)");
+        r.proc.applyPresetNow();                                       // what the message thread does on its own
+        CHECK (r.proc.presetApplied() && std::fabs (realValue (param (r.proc, "level")) - 1.0f) < 1e-6f && realValue (param (r.proc, "collect")) > 0.5f,
+               "Preset Left: the controls then show the snapshot (Level %.2f)", realValue (param (r.proc, "level")));
+        setReal (param (r.proc, "level"), 0.9f);                       // tweaked while in Left (not saved)
+        setReal (param (r.proc, "preset"), (float) anm::PresetLive);
+        r.run (0.2, tone (sr, 300.0, 0.4f));
+        r.proc.applyPresetNow();
+        CHECK (std::fabs (realValue (param (r.proc, "level")) - 0.3f) < 1e-6f && std::fabs (realValue (param (r.proc, "scan")) - 0.37f) < 1e-6f
+               && realValue (param (r.proc, "collect")) < 0.5f,
+               "Preset Live: the settings from before come back (Level %.2f, Scan %.2f)", realValue (param (r.proc, "level")), realValue (param (r.proc, "scan")));
+        CHECK (std::fabs (r.proc.slotValue (0, 0) - 1.0f) < 1e-6f, "a tweak made in Left is not saved unless Save left is pressed");
+        // Right, then Left, then Live, switched by automation every block for a while: never stuck, ends on Live
+        std::mt19937 g (4);
+        r.run (3.0, tone (sr, 300.0, 0.4f), 512, [&] (long) { setReal (param (r.proc, "preset"), (float) std::uniform_int_distribution<int> (0, 2) (g)); });
+        setReal (param (r.proc, "preset"), (float) anm::PresetLive);
+        r.run (0.1, tone (sr, 300.0, 0.4f));
+        r.proc.applyPresetNow();
+        CHECK (std::fabs (realValue (param (r.proc, "level")) - 0.3f) < 1e-6f && std::fabs (realValue (param (r.proc, "scan")) - 0.37f) < 1e-6f,
+               "after a storm of preset switches, Live is still the Live settings (Level %.2f, Scan %.2f)", realValue (param (r.proc, "level")), realValue (param (r.proc, "scan")));
+        // an empty slot plays Live
+        Runner e (sr);
+        setReal (param (e.proc, "level"), 0.44f);
+        setReal (param (e.proc, "preset"), (float) anm::PresetRight);
+        e.run (0.1, tone (sr, 300.0, 0.4f));
+        e.proc.applyPresetNow();
+        CHECK (std::fabs (e.proc.readParams().level - 0.44f) < 1e-6f && std::fabs (realValue (param (e.proc, "level")) - 0.44f) < 1e-6f, "an empty preset slot plays Live");
+    }
+    // Presets are saved with the project; projects from 0.1.0 and 0.2.0 load with empty slots
+    {
+        AnamnesisAudioProcessor a;
+        setReal (param (a, "level"), 0.66f); setReal (param (a, "routing"), 2.0f); a.saveSlot (0);
+        setReal (param (a, "level"), 0.22f); setReal (param (a, "trails"), 1.0f); a.saveSlot (1);
+        setReal (param (a, "level"), 0.5f);
+        juce::MemoryBlock block;
+        a.getStateInformation (block);
+        AnamnesisAudioProcessor b;
+        b.setStateInformation (block.getData(), (int) block.getSize());
+        bool same = b.slotFilled (0) && b.slotFilled (1);
+        for (int s = 0; s < 2; ++s) for (int k = 0; k < AnamnesisAudioProcessor::kSnapshotSize; ++k) same = same && std::fabs (a.slotValue (s, k) - b.slotValue (s, k)) < 1e-6f;
+        CHECK (same, "both preset slots come back with the project");
+        // a project saved while Left plays: comes back playing Left, and Live comes back too
+        setReal (param (a, "preset"), (float) anm::PresetLeft);
+        { juce::AudioBuffer<float> buf (2, 64); juce::MidiBuffer m; a.prepareToPlay (sr, 64); a.processBlock (buf, m); }
+        a.getStateInformation (block);
+        AnamnesisAudioProcessor c;
+        c.setStateInformation (block.getData(), (int) block.getSize());
+        CHECK (std::fabs (realValue (param (c, "level")) - 0.66f) < 1e-6f && std::fabs (c.readParams().level - 0.66f) < 1e-6f, "a project saved in Left reopens in Left (Level %.2f)", c.readParams().level);
+        setReal (param (c, "preset"), (float) anm::PresetLive);
+        { juce::AudioBuffer<float> buf (2, 64); juce::MidiBuffer m; c.prepareToPlay (sr, 64); c.processBlock (buf, m); }
+        c.applyPresetNow();
+        CHECK (std::fabs (realValue (param (c, "level")) - 0.5f) < 1e-6f, ".. and Live then brings back the Live settings (Level %.2f)", realValue (param (c, "level")));
+        for (const char* v : { "0.1.0", "0.2.0" })
+        {
+            juce::XmlElement xml ("Parameters");
+            xml.setAttribute ("pluginVersion", v);
+            auto* e1 = xml.createNewChildElement ("PARAM"); e1->setAttribute ("id", "level"); e1->setAttribute ("value", 0.31);
+            auto* e2 = xml.createNewChildElement ("PARAM"); e2->setAttribute ("id", "preset"); e2->setAttribute ("value", 0.0);
+            juce::MemoryBlock old;
+            juce::AudioProcessor::copyXmlToBinary (xml, old);
+            AnamnesisAudioProcessor d;
+            d.setStateInformation (old.getData(), (int) old.getSize());
+            CHECK (! d.slotFilled (0) && ! d.slotFilled (1) && std::fabs (d.readParams().level - 0.31f) < 1e-6f,
+                   "a project from %s loads with empty preset slots and its own settings heard (even with the switch on Left)", v);
+        }
+    }
+    // Everything of milestone 3 automated while a tone plays: no clicks (20 Hz: the play heads may scrub, never cut)
+    {
+        Runner r (sr);
+        setReal (param (r.proc, "repeats"), 0.6f);
+        setReal (param (r.proc, "spread"), 0.2f);
+        AnamnesisAudioProcessor& p = r.proc;
+        p.saveSlot (0);
+        setReal (param (p, "level"), 0.8f); setReal (param (p, "size"), 0.2f);
+        p.saveSlot (1);
+        const char* ids[] = { "engage", "loop", "scanHold", "collect", "wipe", "always", "latch", "dryKill", "trails", "wideSpread", "memoryDry", "preset" };
+        std::mt19937 g (17);
+        r.run (40.0, tone (sr, 20.0, 0.5f), 512, [&] (long pos)
+        {
+            if (pos % 4608 == 0)
+            {
+                auto* prm = param (p, ids[std::uniform_int_distribution<int> (0, 11) (g)]);
+                prm->setValueNotifyingHost (std::uniform_real_distribution<float> (0.0f, 1.0f) (g));
+            }
+            if (pos % 24576 == 0) p.applyPresetNow();
+        });
+        double mx;
+        const double step = maxStepOf (r.outL);
+        CHECK (r.finite (12.0, mx) && step < 0.12, "Engage, Loop, Hold to scan, the options and the presets automated for 40 s: no clicks (largest step %.4f)", step);
+        std::printf ("milestone 3 switches automated hard (plugin): largest step %.4f\n", step);
+    }
+    // Logic's bypass, transport and preparing again with Loop and Collect on
+    {
+        Runner r (sr);
+        setReal (param (r.proc, "collect"), 1.0f);
+        setReal (param (r.proc, "loop"), 1.0f);
+        r.run (2.0, tone (sr, 200.0, 0.5f));
+        r.run (0.5, tone (sr, 200.0, 0.5f), 512, {}, true);
+        r.head.playing = true;
+        r.run (1.0, tone (sr, 200.0, 0.5f));
+        r.proc.prepareToPlay (44100.0, 128);
+        r.rate = 44100.0;
+        r.run (1.0, tone (44100.0, 200.0, 0.5f), 128);
+        double mx;
+        CHECK (r.finite (6.0, mx), "bypass, transport and a new sample rate with Loop and Collect on: finite (max %.2f)", mx);
+    }
+}
+
 // ------------------------------------------------------------------------------------------------ pictures of the panel
 
 static void writeSnapshots (const juce::File& dir)
@@ -686,6 +893,22 @@ static void writeSnapshots (const juce::File& dir)
             shoot (r.proc, (juce::String ("panel-modifier-") + names[k] + "-125.png").toRawUTF8());
         }
     }
+    {
+        // milestone 3: everything live; Loop, Collect, Wide spread, Trails on, Memory dry On, preset Left
+        Runner r (48000.0);
+        setReal (param (r.proc, "scanMode"), 1.0f);
+        setReal (param (r.proc, "scan"), 0.3f);
+        setReal (param (r.proc, "spread"), 0.2f);
+        r.proc.saveSlot (0);
+        for (const char* id : { "loop", "collect", "wideSpread", "trails" }) setReal (param (r.proc, id), 1.0f);
+        setReal (param (r.proc, "memoryDry"), 2.0f);
+        setReal (param (r.proc, "preset"), 0.0f);
+        r.run (20.0, [&] (long i) { const double t = i / 48000.0; return (float) (0.4 * std::fabs (std::sin (t * 1.3)) * std::sin (2 * kPi * 330 * t)); });
+        r.proc.applyPresetNow();
+        for (const char* id : { "loop", "collect", "wideSpread", "trails" }) setReal (param (r.proc, id), 1.0f);
+        setReal (param (r.proc, "memoryDry"), 2.0f);
+        shoot (r.proc, "panel-milestone3-loop-collect-wide-125.png");
+    }
 }
 
 int main (int argc, char** argv)
@@ -713,6 +936,7 @@ int main (int argc, char** argv)
     testAutomation();
     testCpu();
     testModifiers();
+    testMilestone3();
 
     std::printf ("plugin checks: %d checks, %d failed\n", checks, failures);
     return failures == 0 ? 0 : 1;

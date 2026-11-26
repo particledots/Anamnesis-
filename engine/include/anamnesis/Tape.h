@@ -8,10 +8,14 @@
 //   - Counters are 64-bit, so a session can run for years without wrapping.
 //   - "stride": above 96 kHz the memory keeps every second sample (low-pass filtered first, so nothing folds back). Reads are
 //     still asked for in the host's samples, so the rest of the engine never needs to know.
+//   - Layering (milestone 3, Collect): a sample can be stored on top of what was stored one "layer period" earlier (the
+//     3 minutes of the memory), so the memory overdubs. The sum passes the soft limiter, so layers never pile up without end.
 //
 // Allocation happens only in prepare(), which the plugin calls from Logic's prepare, never from the audio thread.
 
 #pragma once
+
+#include "Gain.h"
 
 #include <algorithm>
 #include <cmath>
@@ -41,6 +45,13 @@ namespace anm::dsp
             return data != nullptr;
         }
 
+        // Collect: how far back (in host seconds) the layer under a new sample lies. Must be shorter than the tape.
+        void setLayerPeriod (double seconds, double hostRate)
+        {
+            layerPeriod = std::clamp<std::int64_t> ((std::int64_t) std::llround (seconds * hostRate / (double) stride), 1,
+                                                    std::max<std::int64_t> (1, capacity - 16));
+        }
+
         bool usable() const { return data != nullptr; }
         std::int64_t bytes() const { return capacity * (std::int64_t) sizeof (float); }
         int getStride() const { return stride; }
@@ -49,8 +60,9 @@ namespace anm::dsp
         // The longest delay that can be read (host samples).
         double maxDelay() const { return (double) std::max<std::int64_t> (0, capacity - 16) * (double) stride; }
 
-        // Add the newest sample (call once per host sample, before reading for that sample).
-        void write (float x)
+        // Add the newest sample (call once per host sample, before reading for that sample). "layer" 0 = record plainly;
+        // 1 = layer it on top of what was stored one layer period ago (Collect); in between = a crossfade of the two.
+        void write (float x, float layer = 0.0f)
         {
             ++hostCount;
             if (stride == 2)
@@ -59,6 +71,8 @@ namespace anm::dsp
                 if (++phase < 2) return;
                 phase = 0;
             }
+            if (layer > 0.0f)
+                x += layer * (softLimit (x + tap (storedCount - layerPeriod)) - x);
             if (data != nullptr)
                 data[(size_t) (storedCount % capacity)] = x;
             ++storedCount;
@@ -130,6 +144,7 @@ namespace anm::dsp
         std::int64_t storedCount = 0;     // stored samples written since prepare()
         std::int64_t hostCount = 0;       // host samples written since prepare()
         std::int64_t clearedAt = 0;       // stored samples before this index read as silence
+        std::int64_t layerPeriod = 1;     // Collect: the layer under a new sample is this many stored samples back
         int stride = 1, phase = 0;
         Biquad lp[2];
     };

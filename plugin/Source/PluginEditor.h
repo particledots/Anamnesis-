@@ -1,5 +1,5 @@
 // The Anamnesis panel. Laid out at 680 x 560 units exactly like the approved draft (2026-11-25) and scaled to the window
-// by the Zoom menu (75% to 200%). Controls that arrive in a later milestone are shown dimmed with an M3 tag.
+// by the Zoom menu (75% to 200%). Every control is live since 0.3.0 (milestone 3).
 
 #pragma once
 
@@ -25,6 +25,9 @@ public:
     const juce::String& getReadoutDetail() const { return readoutDetail; }
     const juce::String& getReadoutRoute() const { return readoutRoute; }
     void refreshTexts() { updateTexts(); }
+    // For the check program: the big buttons and Save left / right, as if clicked (press, then let go).
+    AnmSegments* getLoopButton() { return loopButton; }
+    AnmSegments* getHoldButton() { return holdButton; }
 
 private:
     void timerCallback() override;
@@ -43,6 +46,8 @@ private:
     std::vector<std::unique_ptr<AnmButton>> buttons;
     juce::ComboBox zoomMenu;
     AnmButton* tapButton = nullptr;
+    AnmSegments* loopButton = nullptr;
+    AnmSegments* holdButton = nullptr;
     AnmButton* clearButton = nullptr;
     double lastTapMs = -1.0;
 
