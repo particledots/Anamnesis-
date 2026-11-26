@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.1 — new panel look (built 2026-11-26, Logic test pending)
+## 0.3.1 — new panel look (built and tested in Logic 2026-11-26)
 
 - **The panel restyled** to the approved draft (2026-11-26): black with gold hairline frames in sections (Memory, Echo,
   Recall, Modifier, Presets, Perform, Options), cream knob caps in gold range arcs, blue lamps as the only colour,
@@ -16,6 +16,9 @@
 - Nothing else changed: the sound, the engine, the control list (24 controls), the codes and saved projects.
 - Plugin-layer check: 141 checks (title checked in the drawn pixels inside its ornaments, the stored artwork, the
   drawing cost, the read-out wrapping for every modifier).
+- Build: Actions run 45860718524, all jobs green; auval passed; pluginval strictness 5 passed (AU and VST3).
+- Logic test result (Bryn, 2026-11-26, Intel Mac with Logic 10.7.8): everything works (0.3.0 project opens in the new
+  look with its settings, play heads and line ends move together, lamps light, Zoom 75% and 200% fit).
 
 ## 0.3.0 — milestone 3 (built and tested in Logic 2026-11-25)
 

@@ -9,7 +9,8 @@ In Logic: **Audio Units > particledots > Anamnesis** (an audio effect: put it in
 Status: **all 3 milestones done.** Milestone 1 (0.1.0) tested in Logic on 2026-11-25 on both Macs (M4 Mac mini with
 Logic 11.2.2, Intel Mac with Logic 10.7.8); milestone 2 (0.2.0, the modifiers and routing) tested in Logic on 2026-11-25 on
 the Intel Mac. Milestone 3 (0.3.0: Engage, Loop, Hold to scan, the options, Memory dry, Wide spread, the preset slots) tested in Logic
-on 2026-11-25 on the Intel Mac. 0.3.1 (2026-11-26): the new panel look (below); the sound and the controls are unchanged.
+on 2026-11-25 on the Intel Mac. 0.3.1 (the new panel look, below; the sound and the controls are unchanged) tested in Logic
+on 2026-11-26 on the Intel Mac.
 
 ## The panel (0.3.1)
 
@@ -261,3 +262,8 @@ tested by Bryn on 2026-11-25 on the Intel Mac (Logic 10.7.8). Everything works a
 passed (panel with nothing dimmed, Engage, Dry kill and Trails, Loop held and latched with Size, Hold to scan, Memory dry
 and Wipe, memory emptied / kept with Collect, Wide spread, Save left / Save right and the Preset switch, and the presets
 coming back after saving and reopening). Bryn's words: "very playable in its own right".
+
+0.3.1, the new panel look (Actions run 45860718524, all jobs green, auval and pluginval strictness 5 passed for AU and
+VST3): tested by Bryn on 2026-11-26 on the Intel Mac (Logic 10.7.8). Everything works: a project saved with 0.3.0 opens
+with its settings in the new look; the Scan and Spread play heads move and the gold line ends follow them; Engage, Loop,
+Bank and the options light their lamps; Zoom 75% and 200% with nothing cut off or overlapping.
