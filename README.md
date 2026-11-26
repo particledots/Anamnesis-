@@ -6,7 +6,7 @@ Bliss. The Habit has no published firmware; its manual and web guide were used o
 
 In Logic: **Audio Units > particledots > Anamnesis** (an audio effect: put it in an Audio FX slot, mono or stereo).
 
-Status: **milestone 1 of 3 built (version 0.1.0), not yet tested in Logic.**
+Status: **milestone 1 of 3 done (version 0.1.0, tested in Logic on 2026-11-25 on both Macs: M4 Mac mini with Logic 11.2.2 and Intel Mac with Logic 10.7.8).** Next: milestone 2 (the modifiers and routing).
 
 ## Installing
 
@@ -123,4 +123,10 @@ Fonts: Space Grotesk (SIL Open Font License, `plugin/Fonts/OFL-SpaceGrotesk.txt`
 
 ## Test results
 
-Milestone 1: not yet tested in Logic.
+Milestone 1 (0.1.0, Actions run 45732768630, all jobs green, auval and pluginval strictness 5 passed for AU and VST3):
+tested by Bryn on 2026-11-25 on the M4 Mac mini (Logic 11.2.2) and the Intel Mac (Logic 10.7.8). Everything works, no
+issues: the plugin opens and the panel looks right; the default echo; Size moved slowly and quickly with no pitch wobble
+or clicks; Repeats at full loops without running away; Size Sync follows Logic's tempo and Tap sets Size; Manual Scan
+plays the past with the amber marker moving; Spread adds the older echo with the teal marker; Auto Scan wanders and comes
+back; Clear memory empties the strip and stops the echoes with no click; Zoom 75% and 200%; settings and zoom come back
+after saving and reopening the project.

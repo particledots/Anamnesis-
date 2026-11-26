@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 — milestone 1 (built, not yet tested in Logic)
+## 0.1.0 — milestone 1 (built and tested in Logic 2026-11-25)
 
 - First build. AU and VST3, universal binary (Apple Silicon and Intel), macOS 11 or newer, ad-hoc signed. In Logic:
   Audio Units > particledots > Anamnesis. Codes: `aufx` / `Anms` / `Pdot`.
@@ -14,3 +14,7 @@
 - **The panel** as approved (2026-11-25): memory strip with the Scan and Spread play heads and the echo window, six knobs,
   switches, buttons, options row. Zoom 75% to 200%; the title is checked to fit at every size.
 - Engine self-test: 146 checks. Plugin-layer check (`AnamnesisCheck`): 96 checks, plus pictures of the panel in every run.
+- Build: Actions run 45732768630, all jobs green; auval passed; pluginval strictness 5 passed (AU and VST3).
+- Logic test result (Bryn, 2026-11-25, M4 Mac mini with Logic 11.2.2 and Intel Mac with Logic 10.7.8): everything works,
+  no issues (all 8 test steps: panel, default echo, Size without pitch wobble or clicks, Repeats at full, Sync and Tap,
+  Manual Scan and Spread with their markers, Auto Scan, Clear memory, Zoom, save and reopen).
