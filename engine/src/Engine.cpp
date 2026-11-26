@@ -530,7 +530,10 @@ void Engine::process (float* const* ch, int numCh, int n)
                 out = e.read (outTap (na));
                 back = e.read (fbTap (na));
             }
-            const float heard = slotOut.process (c, out) * eo * uw;
+            // (every new gain is applied only when it is not 1, so at rest each sum is written exactly as 0.2.0 wrote it:
+            // a compiler that fuses multiply-adds then rounds it the same way, bit for bit)
+            float heard = slotOut.process (c, out);
+            if (eo < 1.0f || uw < 1.0f) heard *= eo * uw;
             heardC[c] = heard;
             backC[c] = back;
 
@@ -540,7 +543,7 @@ void Engine::process (float* const* ch, int numCh, int n)
             if (uw < 1.0f) toFeed += (1.0f - uw) * eg * (gP * lastHeadP[c] + sg * gS * lastHeadS[c]);
             const float fedBack = dsp::softLimit (dcFeed[c].process (fb * toFeed * clearFade));
             if (mf > 0.0f) rec += mf * fedBack;
-            rec *= rg;
+            if (rg < 1.0f) rec *= rg;
             if (memoryMoves)
             {
                 memory[c].write (rec, ly);
@@ -576,7 +579,8 @@ void Engine::process (float* const* ch, int numCh, int n)
         {
             auto& e = echo[c];
             const float fed = dsp::softLimit (dc[c].process (fb * backC[c]));
-            float toEcho = slotIn.process (c, heads[c] * eg + lf * fed);
+            const float headsIn = eg < 1.0f ? heads[c] * eg : heads[c];
+            float toEcho = slotIn.process (c, headsIn + lf * fed);
             if (lg > 0.0f)
             {
                 // Loop: the echo copies itself, exactly one period back; nothing new goes in
@@ -587,7 +591,9 @@ void Engine::process (float* const* ch, int numCh, int n)
             }
             e.write (toEcho);
 
-            ch[c][i] = dg * xs[c] + lv * (heardC[c] + md * eg * heads[c]);
+            const float dry = dg < 1.0f ? dg * xs[c] : xs[c];
+            const float wet = md > 0.0f ? heardC[c] + md * eg * heads[c] : heardC[c];
+            ch[c][i] = dry + lv * wet;
         }
 
         // ---- the picture of the memory
