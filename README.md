@@ -6,7 +6,9 @@ Bliss. The Habit has no published firmware; its manual and web guide were used o
 
 In Logic: **Audio Units > particledots > Anamnesis** (an audio effect: put it in an Audio FX slot, mono or stereo).
 
-Status: **milestone 1 of 3 done (version 0.1.0, tested in Logic on 2026-11-25 on both Macs: M4 Mac mini with Logic 11.2.2 and Intel Mac with Logic 10.7.8). Milestone 2 (version 0.2.0, the modifiers and routing) is built and waiting for its Logic test on the Intel Mac.**
+Status: **milestones 1 and 2 of 3 done.** Milestone 1 (0.1.0) tested in Logic on 2026-11-25 on both Macs (M4 Mac mini with
+Logic 11.2.2, Intel Mac with Logic 10.7.8); milestone 2 (0.2.0, the modifiers and routing) tested in Logic on 2026-11-25 on
+the Intel Mac. Next: milestone 3 (Engage, Loop, Hold to scan, the options, Wide spread, the preset slots).
 
 ## Installing
 
@@ -177,3 +179,11 @@ or clicks; Repeats at full loops without running away; Size Sync follows Logic's
 plays the past with the amber marker moving; Spread adds the older echo with the teal marker; Auto Scan wanders and comes
 back; Clear memory empties the strip and stops the echoes with no click; Zoom 75% and 200%; settings and zoom come back
 after saving and reopening the project.
+
+Milestone 2 (0.2.0, Actions run 45738707752, all jobs green, auval and pluginval strictness 5 passed for AU and VST3):
+tested by Bryn on 2026-11-25 on the Intel Mac (Logic 10.7.8). Everything works as described, no issues: Stepped speed
+steps up to 4x and reverses without clicks; In makes each repeat climb another octave; Stability wobbles and darkens,
+with hiss clockwise; Trimmer cuts the start / end of each echo on the beat in Sync; Smooth speed detunes, reaches an
+octave and reverses; Filter low-pass / high-pass, singing in Feed without running away; Dropper pattern and random drops,
+choppy at full; switching Bank, Modifier and Routing while playing has no clicks; Feed with Bank Off makes the multi-tap
+pattern and the strip shows the echoes recorded; settings come back after saving and reopening.

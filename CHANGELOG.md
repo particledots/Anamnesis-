@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 — milestone 2 (built, waiting for the Logic test on the Intel Mac)
+## 0.2.0 — milestone 2 (built and tested in Logic 2026-11-25)
 
 - **Modify, Bank A / Off / B, Modifier 1 / 2 / 3, Routing In / Out / Feed** are live, with the modifier read-out on the
   panel (their M2 tags removed; nothing else on the panel changed). The control list is unchanged (24 controls).
@@ -17,7 +17,11 @@
 - Memory: two 3.4 s recordings for the modifiers (about 3 MB at 48 kHz, 10 MB at 192 kHz).
 - Engine self-test: 326 checks. Plugin-layer check: 110 checks, plus a picture of the panel for each modifier.
 - Build: the engine-test job's extra result annotations (engine cpu, memory at, auto scan ...) now appear (the pattern
-  allows ctest's "1: " in front of each line).
+  allows ctest's "1: " in front of each line). Actions run 45738707752, all jobs green; auval passed; pluginval strictness
+  5 passed (AU and VST3).
+- Logic test result (Bryn, 2026-11-25, Intel Mac with Logic 10.7.8): everything works as described, no issues (all 8
+  test steps: Stepped speed and In, Stability, Trimmer in Sync, Smooth speed, Filter singing in Feed, Dropper and
+  switching without clicks, Feed multi-tap with Bank Off, save and reopen).
 
 ## 0.1.0 — milestone 1 (built and tested in Logic 2026-11-25)
 
