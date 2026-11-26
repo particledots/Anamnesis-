@@ -3,6 +3,7 @@
 
 add_library(anamnesis_engine STATIC
     src/Engine.cpp
+    src/Modifiers.cpp
 )
 
 target_include_directories(anamnesis_engine PUBLIC include)

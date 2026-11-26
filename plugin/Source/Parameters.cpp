@@ -52,10 +52,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout createLayout (std::shared_pt
         return secondsText (anm::sizeFreeSeconds (v));
     });
     addChoice (l, sizeMode, "Size mode", { "Free", "Sync" }, anm::SizeFree);
-    addFloat (l, modify, "Modify", defaults.modify, [] (float v, int)
+    addFloat (l, modify, "Modify", defaults.modify, [ctx] (float v, int)
     {
-        const int p = juce::roundToInt ((v - 0.5f) * 200.0f);
-        return p == 0 ? juce::String ("neutral") : (p < 0 ? "left " + juce::String (-p) + "%" : "right " + juce::String (p) + "%");
+        int kind = anm::ModNone;
+        if (ctx != nullptr && ctx->bankValue != nullptr && ctx->modifierValue != nullptr)
+            kind = anm::modifierKind (juce::roundToInt (ctx->bankValue->load()), juce::roundToInt (ctx->modifierValue->load()));
+        char buf[96];
+        anm::modifyText (kind, v, false, buf, (int) sizeof (buf));
+        return juce::String (buf);
     });
     addFloat (l, spread, "Spread", defaults.spread, [] (float v, int)
     {

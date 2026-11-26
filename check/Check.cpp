@@ -12,6 +12,9 @@
 //      menu works.
 //   6. Heavy random automation of every control stays finite and bounded.
 //   7. CPU of the whole plugin layer (information).
+//   8. Milestone 2: Modify's read-out in Logic follows Bank and Modifier; the panel's Modify text and modifier read-out
+//      (and that they fit their places for every modifier); Modify 12:00 = Bank Off bit for bit through the plugin;
+//      Bank, Modifier, Routing and Modify automated hard without clicks; Size in Sync lining up with Logic's beats.
 //
 // The build workflow runs it on every push and fails if any check fails. "--snapshot <folder>" writes pictures of the panel.
 
@@ -60,6 +63,7 @@ static juce::RangedAudioParameter* param (AnamnesisAudioProcessor& proc, const c
 struct FakePlayHead : juce::AudioPlayHead
 {
     double bpm = 120.0; int num = 4, den = 4; bool playing = false; long sample = 0;
+    double rate = 48000.0, startBeats = 0.0;
     juce::Optional<PositionInfo> getPosition() const override
     {
         PositionInfo i;
@@ -67,6 +71,7 @@ struct FakePlayHead : juce::AudioPlayHead
         i.setTimeSignature (TimeSignature { num, den });
         i.setIsPlaying (playing);
         i.setTimeInSamples ((juce::int64) sample);
+        i.setPpqPosition (startBeats + (double) sample / rate * bpm / 60.0);
         return i;
     }
 };
@@ -88,6 +93,7 @@ struct Runner
         layout.outputBuses.add (set);
         proc.setBusesLayout (layout);
         proc.setPlayConfigDetails (ch, ch, sr, block);
+        head.rate = sr;
         proc.setPlayHead (&head);
         proc.prepareToPlay (sr, block);
     }
@@ -433,14 +439,14 @@ static void testPanel()
     if (ed == nullptr) return;
     auto& panel = ed->getPanel();
 
-    // Dimmed (later milestones) and live controls
-    for (const char* id : { "bank", "modifier", "routing", "preset", "engage", "loop", "scanHold", "collect", "wipe", "always",
+    // Dimmed (milestone 3) and live controls
+    for (const char* id : { "preset", "engage", "loop", "scanHold", "collect", "wipe", "always",
                             "latch", "dryKill", "trails", "wideSpread", "memoryDry", "Save left", "Save right" })
     {
         auto* c = findById (panel, id);
         CHECK (c != nullptr && ! c->isEnabled() && std::fabs (c->getAlpha() - dimAlpha) < 0.01f, "%s is dimmed", id);
     }
-    for (const char* id : { "sizeMode", "scanMode", "Tap", "Clear memory" })
+    for (const char* id : { "sizeMode", "scanMode", "Tap", "Clear memory", "bank", "modifier", "routing" })
     {
         auto* c = findById (panel, id);
         CHECK (c != nullptr && c->isEnabled() && c->getAlpha() > 0.99f, "%s is live", id);
@@ -448,7 +454,7 @@ static void testPanel()
     int liveKnobs = 0, dimKnobs = 0;
     for (auto* c : panel.getChildren())
         if (auto* k = dynamic_cast<AnmKnob*> (c)) (k->isEnabled() ? liveKnobs : dimKnobs)++;
-    CHECK (liveKnobs == 5 && dimKnobs == 1, "5 live knobs, Modify dimmed (%d, %d)", liveKnobs, dimKnobs);
+    CHECK (liveKnobs == 6 && dimKnobs == 0, "all 6 knobs live, Modify included (%d, %d)", liveKnobs, dimKnobs);
 
     // Tap: two taps 750 ms apart set Size to 750 ms
     panel.tapAt (1000.0);
@@ -506,6 +512,131 @@ static void testCpu()
     CHECK (pct < 15.0, "plugin CPU %.2f%%", pct);
 }
 
+// ------------------------------------------------------------------------------------------------ 8. milestone 2
+
+static float knobAt (float side)          // Modify at side -1 .. +1, just past the neutral band
+{
+    const float s = juce::jlimit (-1.0f, 1.0f, side);
+    const float u = (s >= 0.0f ? 1.0f : -1.0f) * (anm::kModifyNeutralBand + std::fabs (s) * (1.0f - anm::kModifyNeutralBand));
+    return 0.5f + 0.5f * u;
+}
+static void setModifier (AnamnesisAudioProcessor& p, int kind, int routing, float modify)
+{
+    setReal (param (p, "bank"), kind < 0 ? (float) anm::BankOff : (float) (kind < 3 ? anm::BankA : anm::BankB));
+    setReal (param (p, "modifier"), (float) (kind < 0 ? 0 : kind % 3));
+    setReal (param (p, "routing"), (float) routing);
+    setReal (param (p, "modify"), modify);
+}
+
+static void testModifiers()
+{
+    using namespace AnmStyle;
+    // Logic's read-out of Modify names what the chosen modifier does
+    {
+        AnamnesisAudioProcessor p;
+        struct T { int kind; float side; const char* want; };
+        const T cases[] = { { anm::ModSteppedSpeed, 0.9f, "forward 4x" }, { anm::ModSteppedSpeed, -0.1f, "reverse 1x" },
+                            { anm::ModTrimmer, 0.2f, "cut the start: 1/4 of Size" }, { anm::ModFilter, -1.0f, "low-pass 80 Hz" },
+                            { anm::ModStability, 1.0f, "wow and flutter 100%, tape noise" }, { anm::ModDropper, 0.0f, "neutral" } };
+        for (const auto& c : cases)
+        {
+            setModifier (p, c.kind, anm::RouteOut, c.side == 0.0f ? 0.5f : knobAt (c.side));
+            const auto txt = param (p, "modify")->getCurrentValueAsText();
+            CHECK (txt == c.want, "Logic's read-out of Modify for %s: \"%s\" (expected \"%s\")", anm::modifierCode (c.kind), txt.toRawUTF8(), c.want);
+        }
+    }
+    // The panel's texts, and that they fit: Modify's value under the knob, the read-out's two lines in their box
+    {
+        AnamnesisAudioProcessor p;
+        std::unique_ptr<juce::AudioProcessorEditor> edBase (p.createEditor());
+        auto& panel = dynamic_cast<AnamnesisAudioProcessorEditor&> (*edBase).getPanel();
+        panel.refreshTexts();
+        CHECK (panel.getReadoutTitle() == "Modifier off", "read-out with Bank Off: %s", panel.getReadoutTitle().toRawUTF8());
+        float widest = 0.0f, widestKnob = 0.0f;
+        int tooWide = 0;
+        for (int kind = 0; kind < anm::kNumModifiers; ++kind)
+            for (int r = 0; r < 3; ++r)
+                for (int i = 0; i <= 40; ++i)
+                {
+                    setModifier (p, kind, r, (float) i / 40.0f);
+                    panel.refreshTexts();
+                    const float line1 = textWidth (panel.getReadoutTitle(), 12.0f) + 12.0f + textWidth (panel.getReadoutRoute(), 11.0f);
+                    const float line2 = textWidth (panel.getReadoutDetail(), 11.0f);
+                    const float under = textWidth (panel.getModifyText(), 11.0f);
+                    widest = std::max (widest, std::max (line1, line2));
+                    widestKnob = std::max (widestKnob, under);
+                    if (line1 > 244.0f || line2 > 244.0f || under > 104.0f)
+                    {
+                        if (++tooWide < 4) std::printf ("  too wide: %s | %s | %s | %s\n", panel.getReadoutTitle().toRawUTF8(), panel.getReadoutRoute().toRawUTF8(),
+                                                        panel.getReadoutDetail().toRawUTF8(), panel.getModifyText().toRawUTF8());
+                    }
+                }
+        CHECK (tooWide == 0, "every modifier's texts fit the panel (%d too wide; widest read-out line %.0f of 244, widest Modify value %.0f of 104)",
+               tooWide, widest, widestKnob);
+        setModifier (p, anm::ModSmoothSpeed, anm::RouteFeed, knobAt (0.5f));
+        panel.refreshTexts();
+        CHECK (panel.getReadoutTitle() == "B1  Smooth speed" && panel.getReadoutRoute().startsWith ("Feed") && panel.getModifyText().startsWith ("fwd"),
+               "read-out: %s / %s / %s", panel.getReadoutTitle().toRawUTF8(), panel.getReadoutRoute().toRawUTF8(), panel.getModifyText().toRawUTF8());
+    }
+    // Modify 12:00 = Bank Off, bit for bit, through the plugin layer
+    for (int r = 0; r < 3; ++r)
+    {
+        Runner a (48000.0), b (48000.0);
+        for (auto* rr : { &a, &b })
+        {
+            setReal (param (rr->proc, "repeats"), 0.7f);
+            setReal (param (rr->proc, "spread"), 0.3f);
+            setReal (param (rr->proc, "scanMode"), 1.0f);
+            setReal (param (rr->proc, "scan"), 0.05f);
+        }
+        setModifier (a.proc, -1, r, 0.5f);
+        setModifier (b.proc, (r * 2 + 1) % anm::kNumModifiers, r, 0.5f);
+        a.run (4.0, tone (48000.0, 330.0, 0.4f));
+        b.run (4.0, tone (48000.0, 330.0, 0.4f));
+        long diff = 0;
+        for (size_t i = 0; i < a.outL.size(); ++i) if (a.outL[i] != b.outL[i]) ++diff;
+        CHECK (diff == 0, "plugin, routing %d: Modify 12:00 = Bank Off bit for bit (%ld samples differ)", r, diff);
+    }
+    // Bank, Modifier, Routing and Modify automated hard while a low tone plays: no clicks
+    {
+        Runner r (48000.0);
+        setReal (param (r.proc, "repeats"), 0.6f);
+        std::mt19937 g (5);
+        std::uniform_int_distribution<int> three (0, 2);
+        std::uniform_real_distribution<float> u (0.0f, 1.0f);
+        r.run (30.0, tone (48000.0, 20.0, 0.5f), 512, [&] (long pos)
+        {
+            if (pos % 9728 == 0) { setReal (param (r.proc, "bank"), (float) three (g)); setReal (param (r.proc, "modifier"), (float) three (g)); }
+            if (pos % 14336 == 0) setReal (param (r.proc, "routing"), (float) three (g));
+            if (pos % 7168 == 0) setReal (param (r.proc, "modify"), u (g));
+        });
+        double step = 0.0, mx;
+        for (size_t i = 1; i < r.outL.size(); ++i)
+            step = std::max (step, std::fabs ((double) (r.outL[i] - r.inL[i]) - (double) (r.outL[i - 1] - r.inL[i - 1])));
+        CHECK (r.finite (12.0, mx) && step < 0.1, "Bank, Modifier, Routing and Modify automated for 30 s: no clicks (largest step %.4f)", step);
+        std::printf ("bank, modifier, routing, Modify automated hard (plugin): largest step %.4f\n", step);
+    }
+    // Size in Sync while Logic plays: the Trimmer's cut sits on Logic's beats
+    {
+        Runner r (48000.0);
+        r.head.playing = true; r.head.bpm = 120.0; r.head.startBeats = 7.3;
+        setReal (param (r.proc, "sizeMode"), 1.0f);
+        setReal (param (r.proc, "size"), 8.0f / 21.0f);           // 1/4
+        setReal (param (r.proc, "repeats"), 0.0f);
+        setReal (param (r.proc, "level"), std::sqrt (0.5f));
+        setModifier (r.proc, anm::ModTrimmer, anm::RouteOut, knobAt (0.5f));   // cut the first half
+        r.run (4.0, [] (long) { return 0.5f; });
+        int good = 0;
+        for (double beat = 10.0; beat < 14.0; beat += 1.0)
+        {
+            const double t = (beat - 7.3) / 2.0;
+            const float early = r.outL[(size_t) ((t + 0.1) * 48000.0)] - 0.5f, late = r.outL[(size_t) ((t + 0.35) * 48000.0)] - 0.5f;
+            if (early < 0.05f && late > 0.45f) ++good;
+        }
+        CHECK (good == 4, "Size in Sync: the Trimmer cuts the first half of each of Logic's beats (%d of 4)", good);
+    }
+}
+
 // ------------------------------------------------------------------------------------------------ pictures of the panel
 
 static void writeSnapshots (const juce::File& dir)
@@ -543,6 +674,18 @@ static void writeSnapshots (const juce::File& dir)
         r.run (0.1, [] (long) { return 0.0f; });
         shoot (r.proc, "panel-size-sync-100.png");
     }
+    {
+        // one picture per modifier (milestone 2), each at a different setting and routing
+        const char* names[anm::kNumModifiers] = { "A1-stepped-speed", "A2-stability", "A3-trimmer", "B1-smooth-speed", "B2-filter", "B3-dropper" };
+        const float sides[anm::kNumModifiers] = { 0.62f, 0.8f, -0.3f, -0.4f, -0.7f, 1.0f };
+        for (int k = 0; k < anm::kNumModifiers; ++k)
+        {
+            Runner r (48000.0);
+            setModifier (r.proc, k, k % 3, knobAt (sides[k]));
+            r.run (0.1, [] (long) { return 0.0f; });
+            shoot (r.proc, (juce::String ("panel-modifier-") + names[k] + "-125.png").toRawUTF8());
+        }
+    }
 }
 
 int main (int argc, char** argv)
@@ -569,6 +712,7 @@ int main (int argc, char** argv)
     testPanel();
     testAutomation();
     testCpu();
+    testModifiers();
 
     std::printf ("plugin checks: %d checks, %d failed\n", checks, failures);
     return failures == 0 ? 0 : 1;

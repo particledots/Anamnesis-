@@ -1,11 +1,12 @@
 // The Anamnesis engine. Plain C++17, no JUCE, no plugin code.
 //
-// How it works (milestone 1):
+// How it works:
 //
 //     input ──► MEMORY (3 minutes, always recording) ──► primary play head (Scan) ─────────┐
-//                                                    └─► secondary play head (Spread) ──┐  │
-//                                                                                       ▼  ▼
-//                                                                    ECHO (Size, Repeats) ──► Level ──► + dry ──► output
+//       ▲                                            └─► secondary play head (Spread) ──┐  │
+//       │                                                                               ▼  ▼
+//       │                                    [In slot] ──► ECHO (Size, Repeats) ──► [Out slot] ──► Level ──► + dry ──► output
+//       └───────────────────── Feed: Repeats x the modified echo ◄──────────────────────┘
 //
 //   * The memory records the input all the time. Clear memory makes everything in it read as silence, at once.
 //   * The primary play head reads the memory "Scan" seconds back (0 = now). With Scan at zero the plugin is a plain delay.
@@ -16,12 +17,23 @@
 //     crossfades (20 ms) from the old read point to the new one.
 //   * The feedback passes a DC blocker and the soft limiter, so it can go to "infinite" and pile up but never run away.
 //
+//   * Milestone 2, the modifiers (Modifiers.h) and Routing:
+//       In    the modifier sits on what is written into the echo, inside its feedback loop: it builds up with every repeat.
+//       Out   the modifier sits on the echo's output: every echo sounds the same.
+//       Feed  as Out, and the modified echo is recorded back into the memory (with the input); the echo's own feedback is
+//             off and Repeats sets the feedback of this whole loop, so Spread and Scan become a multi-tap of the memory.
+//     The routing switches with 20 ms ramps, the modifiers fade out and in (15 ms each): no clicks. The delay a modifier adds
+//     (the speed readers, Stability) is taken off the echo's reading time, so the echoes stay on their Size grid.
+//   * Size in Sync while Logic plays: the Size grid (where Trimmer cuts, where Dropper's pattern sits, when Auto Scan rolls
+//     its dice) lines up with Logic's beats.
+//
 // Stereo: both channels use the same heads, times and random choices, so the stereo picture of the input is kept.
-// Milestone 2 adds the modifiers and In / Out / Feed; milestone 3 adds Engage, Loop, Hold to scan, the options, Wide spread.
+// Milestone 3 adds Engage, Loop, Hold to scan, the options, Wide spread.
 
 #pragma once
 
 #include "Gain.h"
+#include "Modifiers.h"
 #include "Params.h"
 #include "Tape.h"
 
@@ -58,6 +70,7 @@ namespace anm
         std::atomic<float> spreadSeconds { 0.0f };        // the Spread distance, 0 = off
         std::atomic<int>   noteIndex { -1 };              // Size in Sync: the note value used
         std::atomic<bool>  memoryOk { true };
+        std::atomic<int>   modifierInEffect { -1 };       // the modifier heard now (ModNone = none or neutral)
     };
 
     class Engine
@@ -87,7 +100,12 @@ namespace anm
         const EngineDisplay& display() const { return disp; }
 
         // For the self-test: the auto-scan dice, made repeatable.
-        void seedRandom (std::uint64_t s) { rng = s ? s : 0x9E3779B97F4A7C15ull; }
+        void seedRandom (std::uint64_t s)
+        {
+            rng = s ? s : 0x9E3779B97F4A7C15ull;
+            slotIn.seed (s * 0x9E3779B97F4A7C15ull + 1);
+            slotOut.seed (s * 0xC2B2AE3D27D4EB4Full + 2);
+        }
         // For the self-test: pretend the memory could not be allocated.
         void simulateAllocationFailure (bool fail) { failNextPrepare = fail; }
 
@@ -108,6 +126,8 @@ namespace anm
         struct EchoTaps
         {
             double delay[2] = { 0.0, 0.0 };
+            double outComp[2] = { 0.0, 0.0 };   // read the echo's output this many samples earlier (a modifier's own delay)
+            double fbComp[2] = { 0.0, 0.0 };    // .. and its feedback (In routing)
             int active = 0;
             float fade = 1.0f;          // progress of the crossfade to "active" (1 = done)
             int hold = 0;               // samples to wait before the next crossfade
@@ -123,8 +143,22 @@ namespace anm
         bool ok = false, failNextPrepare = false;
 
         dsp::Tape memory[2], echo[2];
-        dsp::DcBlocker dc[2];
+        dsp::DcBlocker dc[2], dcFeed[2];
         dsp::Glide level, feedback, spreadGain;
+
+        // A value that moves to its target in a straight line and lands on it exactly (the routing switches).
+        struct Ramp
+        {
+            float value = 0.0f, target = 0.0f, step = 0.001f;
+            float next()
+            {
+                const float d = target - value;
+                value = std::fabs (d) <= step ? target : value + (d > 0.0f ? step : -step);
+                return value;
+            }
+        };
+        Ramp loopFeedback, memoryFeed;          // In / Out: the echo's own feedback; Feed: the echo back into the memory
+        mod::Slot slotIn, slotOut;
         float headJumpStep = 0.0f, echoFadeStep = 0.0f, clearFadeStep = 0.0f, inputFadeStep = 0.0f;
         double glideCoeff = 0.0;
         int sizeHoldSamples = 0;

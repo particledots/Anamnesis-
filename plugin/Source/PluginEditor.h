@@ -1,5 +1,5 @@
 // The Anamnesis panel. Laid out at 680 x 560 units exactly like the approved draft (2026-11-25) and scaled to the window
-// by the Zoom menu (75% to 200%). Controls that arrive in a later milestone are shown dimmed with an M2 / M3 tag.
+// by the Zoom menu (75% to 200%). Controls that arrive in a later milestone are shown dimmed with an M3 tag.
 
 #pragma once
 
@@ -19,6 +19,12 @@ public:
     // For the check program: the Tap button, as if clicked at these moments (milliseconds).
     void tapAt (double ms);
     juce::ComboBox& getZoomMenu() { return zoomMenu; }
+    // For the check program: the texts the panel shows for Modify and in the modifier read-out.
+    const juce::String& getModifyText() const { return modifyText; }
+    const juce::String& getReadoutTitle() const { return readoutTitle; }
+    const juce::String& getReadoutDetail() const { return readoutDetail; }
+    const juce::String& getReadoutRoute() const { return readoutRoute; }
+    void refreshTexts() { updateTexts(); }
 
 private:
     void timerCallback() override;
@@ -40,7 +46,8 @@ private:
     AnmButton* clearButton = nullptr;
     double lastTapMs = -1.0;
 
-    juce::String levelText, repeatsText, sizeText, spreadText, scanText;
+    juce::String levelText, repeatsText, sizeText, spreadText, scanText, modifyText;
+    juce::String readoutTitle, readoutDetail, readoutRoute;
 };
 
 class AnamnesisAudioProcessorEditor : public juce::AudioProcessorEditor

@@ -17,6 +17,7 @@ namespace
     constexpr double kClearFadeSeconds = 0.010;      // Clear memory: the echo fades out in this time, then everything is emptied
     constexpr double kInputFadeSeconds = 0.005;      // after a Clear (and at the start) the input fades into the memory
     constexpr float  kInputLimit = 64.0f;            // anything louder (or not a number) coming in is treated as a fault
+    constexpr double kRoutingRampSeconds = 0.020;    // In / Out / Feed: the feedback paths cross over in this time
 
     inline float crossfadeGain (float t)              // 0..1, smooth at both ends; the two gains always add up to 1
     {
@@ -31,7 +32,7 @@ Engine::Engine()
 
 std::int64_t Engine::memoryBytes() const
 {
-    return memory[0].bytes() + memory[1].bytes() + echo[0].bytes() + echo[1].bytes();
+    return memory[0].bytes() + memory[1].bytes() + echo[0].bytes() + echo[1].bytes() + slotIn.bytes() + slotOut.bytes();
 }
 
 bool Engine::prepare (double newRate)
@@ -56,7 +57,10 @@ bool Engine::prepare (double newRate)
         ok = memory[c].prepare (kMemorySeconds + 1.0, sampleRate, stride) && ok;
         ok = echo[c].prepare (kSizeMaxSeconds + 1.0, sampleRate, 1) && ok;
         dc[c].setUp (sampleRate);
+        dcFeed[c].setUp (sampleRate);
     }
+    ok = slotIn.prepare (sampleRate) && ok;
+    ok = slotOut.prepare (sampleRate) && ok;
     disp.memoryOk.store (ok);
 
     level.setTime (kLevelGlideSeconds, sampleRate);
@@ -65,6 +69,7 @@ bool Engine::prepare (double newRate)
     level.jumpTo (levelGain (params.level));
     feedback.jumpTo (repeatsFeedback (params.repeats));
     spreadGain.jumpTo (spreadOn (params.spread) ? 1.0f : 0.0f);
+    loopFeedback.step = memoryFeed.step = (float) (1.0 / (kRoutingRampSeconds * sampleRate));
 
     headJumpStep  = (float) (1.0 / (kJumpSeconds * sampleRate));
     echoFadeStep  = (float) (1.0 / (kJumpSeconds * sampleRate));
@@ -188,7 +193,13 @@ void Engine::doClear()
         echo[c].clearAll();
         dc[c] = dsp::DcBlocker {};
         dc[c].setUp (sampleRate);
+        dcFeed[c] = dsp::DcBlocker {};
+        dcFeed[c].setUp (sampleRate);
     }
+    slotIn.clearHistory();
+    slotOut.clearHistory();
+    slotIn.reset();                                       // (the modifier fades back in; the echo is silent by now anyway)
+    slotOut.reset();
     inputFade = 0.0f;
     slicePeak = 0.0f;
     sliceCount = 0.0;
@@ -217,6 +228,32 @@ void Engine::process (float* const* ch, int numCh, int n)
     if (manual && trip != Trip::Home) trip = Trip::Home;
     if (clearRequested.exchange (false, std::memory_order_acq_rel))
         clearing = true;
+
+    // ---- the modifier and the routing
+    const int routing = std::clamp (params.routing, 0, 2);
+    const int kind = modifierKind (params.bank, params.modifier);
+    const int inEffect = modifyNeutral (params.modify) ? (int) ModNone : kind;
+    slotIn.setTarget (routing == RouteIn ? inEffect : ModNone, params.modify, size);
+    slotOut.setTarget (routing != RouteIn ? inEffect : ModNone, params.modify, size);
+    const double wantOutComp = routing == RouteIn ? slotIn.targetLatency() : slotOut.targetLatency();
+    const double wantFbComp  = routing == RouteIn ? slotIn.targetLatency() : 0.0;
+    loopFeedback.target = routing == RouteFeed ? 0.0f : 1.0f;
+    memoryFeed.target   = routing == RouteFeed ? 1.0f : 0.0f;
+
+    // ---- Size in Sync while Logic plays: the Size grid follows Logic's beats
+    if (params.sizeMode == SizeSync && params.hostPlaying && params.hostBeats >= 0.0 && std::isfinite (params.hostBeats))
+    {
+        const auto& v = kNoteValues[noteIndexUsed (params.size, params.bpm, params.beatsPerBar)];
+        const double noteBeats = v.beats + v.bars * safeBeatsPerBar (params.beatsPerBar);
+        if (noteBeats > 0.0)
+        {
+            const double want = std::fmod (params.hostBeats, noteBeats) / noteBeats * sizeSamples;
+            double diff = want - echoClock;
+            if (diff > 0.5 * sizeSamples) diff -= sizeSamples;
+            if (diff < -0.5 * sizeSamples) diff += sizeSamples;
+            if (std::fabs (diff) > 2.0) echoClock = std::clamp (want, 0.0, std::max (0.0, sizeSamples - 1.0));
+        }
+    }
     if (fresh)
     {
         // The first block after prepare: the play heads start where they belong (nothing to glide or jump from yet),
@@ -227,7 +264,11 @@ void Engine::process (float* const* ch, int numCh, int n)
         const double second = std::min (kScanMaxSeconds, where + spreadDistance);
         secondary = Head { second, second, 1.0f };
         taps.delay[0] = taps.delay[1] = sizeSamples;
+        taps.outComp[0] = taps.outComp[1] = wantOutComp;
+        taps.fbComp[0] = taps.fbComp[1] = wantFbComp;
         taps.fade = 1.0f;
+        loopFeedback.value = loopFeedback.target;
+        memoryFeed.value = memoryFeed.target;
         level.jumpTo (level.target);
         feedback.jumpTo (feedback.target);
         spreadGain.jumpTo (spreadGain.target);
@@ -240,10 +281,14 @@ void Engine::process (float* const* ch, int numCh, int n)
         if (taps.fade >= 1.0f)
         {
             if (taps.hold > 0) --taps.hold;
-            else if (std::fabs (taps.delay[taps.active] - sizeSamples) > 0.5)
+            else if (std::fabs (taps.delay[taps.active] - sizeSamples) > 0.5
+                     || std::fabs (taps.outComp[taps.active] - wantOutComp) > 0.5
+                     || std::fabs (taps.fbComp[taps.active] - wantFbComp) > 0.5)
             {
                 taps.active = 1 - taps.active;
                 taps.delay[taps.active] = sizeSamples;
+                taps.outComp[taps.active] = wantOutComp;
+                taps.fbComp[taps.active] = wantFbComp;
                 taps.fade = 0.0f;
             }
         }
@@ -302,44 +347,57 @@ void Engine::process (float* const* ch, int numCh, int n)
         const float lv = level.next() * clearFade;
         const float fb = feedback.next();
         const float sg = spreadGain.next();
+        const float lf = loopFeedback.next(), mf = memoryFeed.next();
         const float g = crossfadeGain (taps.fade);
-        const double newD = taps.delay[taps.active], oldD = taps.delay[1 - taps.active];
+        const int na = taps.active, no = 1 - taps.active;
         // The echo output tap is earlier than the feedback tap by the play heads' own small lag, so the first echo arrives
-        // exactly Size after the input and every repeat after it exactly Size later again.
-        auto outTap = [&] (double d) { return std::clamp (d - memLatency - 1.0, echoLo, echoHi); };
-        auto fbTap  = [&] (double d) { return std::clamp (d - 1.0, echoLo, echoHi); };
+        // exactly Size after the input and every repeat after it exactly Size later again. A modifier's own delay is taken off.
+        auto outTap = [&] (int k) { return std::clamp (taps.delay[k] - memLatency - 1.0 - taps.outComp[k], echoLo, echoHi); };
+        auto fbTap  = [&] (int k) { return std::clamp (taps.delay[k] - 1.0 - taps.fbComp[k], echoLo, echoHi); };
+
+        const double phase = std::clamp (echoClock / sizeSamples, 0.0, 0.999999);
+        slotIn.advance (phase);
+        slotOut.advance (phase);
 
         float peak = 0.0f;
         for (int c = 0; c < nc; ++c)
         {
             float x = ch[c][i];
             if (! std::isfinite (x) || std::fabs (x) > kInputLimit) x = 0.0f;
-            peak = std::max (peak, std::fabs (x));
 
-            memory[c].write (x * inputFade);
-            float heads = readHead (primary, c);
-            if (sg > 0.0f) heads += sg * readHead (secondary, c);
-
+            // the echo's output and feedback (read before anything is written this sample)
             auto& e = echo[c];
             float out, back;
             if (taps.fade < 1.0f)
             {
-                out  = (1.0f - g) * e.read (outTap (oldD)) + g * e.read (outTap (newD));
-                back = (1.0f - g) * e.read (fbTap (oldD))  + g * e.read (fbTap (newD));
+                out  = (1.0f - g) * e.read (outTap (no)) + g * e.read (outTap (na));
+                back = (1.0f - g) * e.read (fbTap (no))  + g * e.read (fbTap (na));
             }
             else
             {
-                out = e.read (outTap (newD));
-                back = e.read (fbTap (newD));
+                out = e.read (outTap (na));
+                back = e.read (fbTap (na));
             }
-            const float fed = dsp::softLimit (dc[c].process (fb * back));
-            e.write (heads + fed);
+            const float heard = slotOut.process (c, out);
 
-            ch[c][i] = x + lv * out;
+            // the memory records the input (and, in Feed, Repeats x the echo that is heard)
+            float rec = x * inputFade;
+            const float fedBack = dsp::softLimit (dcFeed[c].process (fb * heard * clearFade));
+            if (mf > 0.0f) rec += mf * fedBack;
+            memory[c].write (rec);
+            peak = std::max (peak, std::fabs (rec));
+
+            float heads = readHead (primary, c);
+            if (sg > 0.0f) heads += sg * readHead (secondary, c);
+
+            const float fed = dsp::softLimit (dc[c].process (fb * back));
+            e.write (slotIn.process (c, heads + lf * fed));
+
+            ch[c][i] = x + lv * heard;
         }
 
         // ---- the picture of the memory
-        slicePeak = std::max (slicePeak, peak * inputFade);
+        slicePeak = std::max (slicePeak, peak);
         sliceCount += 1.0;
         if (sliceCount >= sliceLength)
         {
@@ -356,6 +414,7 @@ void Engine::process (float* const* ch, int numCh, int n)
     disp.scanTargetSeconds.store ((float) (manual ? manualTarget : (trip == Trip::Travel || trip == Trip::Stay ? tripTarget : 0.0)),
                                   std::memory_order_relaxed);
     disp.spreadSeconds.store ((float) spreadDistance, std::memory_order_relaxed);
+    disp.modifierInEffect.store (inEffect, std::memory_order_relaxed);
     disp.noteIndex.store (params.sizeMode == SizeSync ? noteIndexUsed (params.size, params.bpm, params.beatsPerBar) : -1,
                           std::memory_order_relaxed);
     const double reach = manual ? manualTarget : (autoScanOn (params.scan) ? autoScanDepthSeconds (params.scan) : 0.0);

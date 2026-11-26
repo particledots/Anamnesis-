@@ -3,7 +3,8 @@
 //
 // The full control list (all milestones) is fixed in build 1; see plugin/Source/Parameters.h for ids and order.
 // Milestone 1 makes these work: Level, Repeats, Size (free and synced to Logic's tempo), Spread, Scan (Auto and Manual),
-// Clear memory. Everything else is stored and ignored until its milestone.
+// Clear memory. Milestone 2 adds Modify, Bank, Modifier and Routing (the six modifiers). Everything else is stored and
+// ignored until its milestone.
 //
 // All curves here are our own first guesses, drawn through the landmarks in the Habit guide. They can be retuned by ear
 // later without touching a control id.
@@ -58,6 +59,8 @@ namespace anm
         // From Logic (the plugin fills these in each block)
         double bpm = 120.0;            // used when Size is synced
         double beatsPerBar = 4.0;
+        double hostBeats = -1.0;       // Logic's position in beats (quarter notes) at the start of the block; < 0 = unknown
+        bool  hostPlaying = false;     // Logic's transport is running (Size in Sync then lines its grid up with Logic's beats)
     };
 
     // ------------------------------------------------------------------------------------------ Level
@@ -231,6 +234,171 @@ namespace anm
     // more than kScanJumpSeconds (automation, a big knob jump) crossfades to the new place instead of scrubbing all the way.
     inline constexpr double kScanGlideSpeed = 12.0;
     inline constexpr double kScanJumpSeconds = 3.0;
+
+    // ------------------------------------------------------------------------------------------ Modify (milestone 2)
+
+    // Bank A / Off / B and Modifier 1 / 2 / 3 pick one of six modifiers (our own designs, after the Habit guide's
+    // descriptions). Modify 12:00 is neutral for all of them (exactly the same as Bank Off, bit for bit); the two sides do
+    // different things. A small band around 12:00 (kModifyNeutralBand of the half travel) counts as neutral, so a knob that is
+    // nearly centred is really centred.
+    enum ModifierKind { ModNone = -1, ModSteppedSpeed = 0, ModStability = 1, ModTrimmer = 2,      // bank A: 1, 2, 3
+                        ModSmoothSpeed = 3, ModFilter = 4, ModDropper = 5 };                          // bank B: 1, 2, 3
+    inline constexpr int kNumModifiers = 6;
+
+    inline int modifierKind (int bank, int modifier)
+    {
+        const int m = std::clamp (modifier, 0, 2);
+        return bank == BankA ? m : (bank == BankB ? 3 + m : (int) ModNone);
+    }
+
+    inline constexpr float kModifyNeutralBand = 0.02f;
+    inline float modifySide (float knob) { return 2.0f * (std::clamp (knob, 0.0f, 1.0f) - 0.5f); }      // -1 .. +1
+    inline bool  modifyNeutral (float knob) { return std::fabs (modifySide (knob)) < kModifyNeutralBand; }
+    inline bool  modifyClockwise (float knob) { return modifySide (knob) > 0.0f; }
+    // How far past the neutral band, 0 .. 1 on either side.
+    inline float modifyAmount (float knob)
+    {
+        return std::clamp ((std::fabs (modifySide (knob)) - kModifyNeutralBand) / (1.0f - kModifyNeutralBand), 0.0f, 1.0f);
+    }
+
+    // A1 Stepped speed: clockwise forward 1.5x, 2x, 3x, 4x; counter-clockwise reverse 1x, 1.5x, 2x, 3x, 4x (fifths and
+    // octaves, so the echoes stay in key). Returned signed: negative = reverse. 1 = normal speed (neutral).
+    inline constexpr double kSteppedForward[4] = { 1.5, 2.0, 3.0, 4.0 };
+    inline constexpr double kSteppedReverse[5] = { 1.0, 1.5, 2.0, 3.0, 4.0 };
+    inline double steppedSpeed (float knob)
+    {
+        if (modifyNeutral (knob)) return 1.0;
+        const float a = modifyAmount (knob);
+        if (modifyClockwise (knob)) return kSteppedForward[std::min (3, (int) (a * 4.0f))];
+        return -kSteppedReverse[std::min (4, (int) (a * 5.0f))];
+    }
+
+    // B1 Smooth speed: clockwise forward, counter-clockwise reverse; the speed is 2 to the power (amount squared), so the
+    // first stretch is a fine detune (a few cents) and the end is 2x (an octave). Signed like steppedSpeed.
+    inline double smoothSpeed (float knob)
+    {
+        if (modifyNeutral (knob)) return 1.0;
+        const double a = modifyAmount (knob);
+        const double mag = std::pow (2.0, a * a);
+        return modifyClockwise (knob) ? mag : -mag;
+    }
+
+    // A2 Stability: wow, flutter, tape filtering and a little saturation, growing with the amount on both sides;
+    // clockwise adds tape hiss, counter-clockwise is noise-free.
+    inline constexpr double kWowMaxSeconds = 0.0050;        // depth of the slow wobble at full
+    inline constexpr double kFlutterMaxSeconds = 0.00030;   // depth of the fast one at full
+    inline double stabilityLowpassHz (float amount)  { return 20000.0 * std::pow (3200.0 / 20000.0, (double) amount); }
+    inline double stabilityHighpassHz (float amount) { return 15.0 * std::pow (110.0 / 15.0, (double) amount); }
+    inline float  stabilityHissLevel (float amount)  { return 0.0060f * std::pow (amount, 1.5f); }      // -44 dB at full
+
+    // A3 Trimmer: cuts a part of every echo, in steps of Size. Counter-clockwise cuts the end, clockwise the start (as the
+    // Habit guide's diagram shows).
+    inline constexpr int kNumTrimSteps = 9;
+    inline constexpr double kTrimSteps[kNumTrimSteps] = { 1.0 / 8, 1.0 / 4, 1.0 / 3, 3.0 / 8, 1.0 / 2, 5.0 / 8, 2.0 / 3, 3.0 / 4, 7.0 / 8 };
+    inline constexpr const char* kTrimNames[kNumTrimSteps] = { "1/8", "1/4", "1/3", "3/8", "1/2", "5/8", "2/3", "3/4", "7/8" };
+    inline int trimStep (float knob) { return std::min (kNumTrimSteps - 1, (int) (modifyAmount (knob) * (float) kNumTrimSteps)); }
+    inline double trimFraction (float knob) { return modifyNeutral (knob) ? 0.0 : kTrimSteps[trimStep (knob)]; }
+    inline bool trimCutsStart (float knob) { return modifyClockwise (knob); }
+
+    // B2 Filter: counter-clockwise a low-pass closing from 20 kHz to 80 Hz, clockwise a high-pass rising from 20 Hz to 8 kHz.
+    // The resonance grows with the amount; in In and Feed it can pile up and sing (kept bounded by the limiters).
+    inline double filterCutoffHz (float knob)
+    {
+        const double a = std::pow ((double) modifyAmount (knob), 0.8);
+        return modifyClockwise (knob) ? 20.0 * std::pow (8000.0 / 20.0, a) : 20000.0 * std::pow (80.0 / 20000.0, a);
+    }
+    inline double filterQ (float knob) { return 0.7071 + 1.5 * std::pow ((double) modifyAmount (knob), 1.5); }
+
+    // B3 Dropper: brief drops in level, sometimes smooth and shallow, sometimes abrupt and deep. Counter-clockwise random
+    // (more often as it turns); clockwise a pattern of drops that is the same for every echo (more drops per Size as it
+    // turns). Both become granular near the end.
+    inline int dropperPatternCount (float knob)
+    {
+        const float a = modifyAmount (knob);
+        return 1 + (int) std::lround (23.0f * a * a);
+    }
+    inline double dropperRandomRate (float knob)                         // drops per second
+    {
+        const double a = modifyAmount (knob);
+        return 0.6 + 35.0 * std::pow (a, 2.5);
+    }
+
+    inline const char* modifierName (int kind)
+    {
+        switch (kind)
+        {
+            case ModSteppedSpeed: return "Stepped speed";
+            case ModStability:    return "Stability";
+            case ModTrimmer:      return "Trimmer";
+            case ModSmoothSpeed:  return "Smooth speed";
+            case ModFilter:       return "Filter";
+            case ModDropper:      return "Dropper";
+            default:              return "Off";
+        }
+    }
+    inline const char* modifierCode (int kind)
+    {
+        static constexpr const char* codes[kNumModifiers] = { "A1", "A2", "A3", "B1", "B2", "B3" };
+        return kind >= 0 && kind < kNumModifiers ? codes[kind] : "";
+    }
+
+    inline void formatHz (double hz, char* out, int n)
+    {
+        if (hz >= 1000.0) std::snprintf (out, (size_t) n, "%.1f kHz", hz / 1000.0);
+        else              std::snprintf (out, (size_t) n, "%d Hz", (int) std::lround (hz));
+    }
+
+    // What Modify does at this setting. "shortForm" for under the knob; the long form for Logic and the panel's read-out.
+    inline void modifyText (int kind, float knob, bool shortForm, char* out, int n)
+    {
+        const bool neutral = modifyNeutral (knob), cw = modifyClockwise (knob);
+        const int pct = (int) std::lround (modifyAmount (knob) * 100.0f);
+        char hz[24];
+        switch (kind)
+        {
+            case ModSteppedSpeed:
+            case ModSmoothSpeed:
+            {
+                const double s = kind == ModSteppedSpeed ? steppedSpeed (knob) : smoothSpeed (knob);
+                if (neutral) { std::snprintf (out, (size_t) n, shortForm ? "neutral" : "normal speed"); return; }
+                const double mag = std::fabs (s);
+                const char* dir = s > 0.0 ? (shortForm ? "fwd" : "forward") : (shortForm ? "rev" : "reverse");
+                if (kind == ModSteppedSpeed)
+                    std::snprintf (out, (size_t) n, std::fabs (mag - std::round (mag)) < 1.0e-9 ? "%s %.0fx" : "%s %.1fx", dir, mag);
+                else if (shortForm)
+                    std::snprintf (out, (size_t) n, "%s %.3fx", dir, mag);
+                else
+                    std::snprintf (out, (size_t) n, "%s %.3fx (%+.1f semitones)", dir, mag, 12.0 * std::log2 (mag));
+                return;
+            }
+            case ModStability:
+                if (neutral) std::snprintf (out, (size_t) n, "neutral");
+                else if (shortForm) std::snprintf (out, (size_t) n, cw ? "noise %d%%" : "clean %d%%", pct);
+                else std::snprintf (out, (size_t) n, cw ? "wow and flutter %d%%, tape noise" : "wow and flutter %d%%, no noise", pct);
+                return;
+            case ModTrimmer:
+                if (neutral) std::snprintf (out, (size_t) n, "neutral");
+                else std::snprintf (out, (size_t) n, shortForm ? "%s %s" : "cut the %s: %s of Size", cw ? "start" : "end",
+                                    kTrimNames[trimStep (knob)]);
+                return;
+            case ModFilter:
+                if (neutral) { std::snprintf (out, (size_t) n, "neutral"); return; }
+                formatHz (filterCutoffHz (knob), hz, (int) sizeof (hz));
+                std::snprintf (out, (size_t) n, shortForm ? "%s %s" : "%s %s", cw ? (shortForm ? "HP" : "high-pass") : (shortForm ? "LP" : "low-pass"), hz);
+                return;
+            case ModDropper:
+                if (neutral) std::snprintf (out, (size_t) n, "neutral");
+                else if (cw) std::snprintf (out, (size_t) n, shortForm ? "pattern %d" : "drop pattern, %d per echo%s",
+                                            dropperPatternCount (knob), modifyAmount (knob) > 0.85f ? " (granular)" : "");
+                else std::snprintf (out, (size_t) n, shortForm ? "random %d%%" : "random drops, %d%%%s", pct,
+                                    modifyAmount (knob) > 0.85f ? " (granular)" : "");
+                return;
+            default:
+                if (neutral) std::snprintf (out, (size_t) n, "neutral");
+                else std::snprintf (out, (size_t) n, "%s %d%%", cw ? "right" : "left", pct);
+                return;
+        }
+    }
 
     // ------------------------------------------------------------------------------------------ read-outs
 

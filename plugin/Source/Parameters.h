@@ -19,7 +19,7 @@ namespace AnmParams
     inline constexpr const char* repeats     = "repeats";
     inline constexpr const char* size        = "size";
     inline constexpr const char* sizeMode    = "sizeMode";      // Free / Sync
-    inline constexpr const char* modify      = "modify";        // M2
+    inline constexpr const char* modify      = "modify";        // M2: what it does depends on Bank and Modifier
     inline constexpr const char* spread      = "spread";
     inline constexpr const char* scan        = "scan";
     inline constexpr const char* scanMode    = "scanMode";      // Auto / Manual
@@ -47,6 +47,9 @@ namespace AnmParams
     {
         std::atomic<int> sizeMode { 0 }, scanMode { 0 };
         std::atomic<double> bpm { 120.0 }, beatsPerBar { 4.0 };
+        // Bank and Modifier as they are set now (the Modify read-out names what the chosen modifier does); set by the processor.
+        std::atomic<float>* bankValue = nullptr;
+        std::atomic<float>* modifierValue = nullptr;
     };
 
     juce::AudioProcessorValueTreeState::ParameterLayout createLayout (std::shared_ptr<ReadoutContext> context);

@@ -63,16 +63,16 @@ AnamnesisPanel::AnamnesisPanel (AnamnesisAudioProcessor& p) : proc (p)
     knob (level,   text(), 75, 205);
     knob (repeats, text(), 185, 205);
     knob (size,    text(), 295, 205);
-    knob (modify,  text(), 75, 335, true);
+    knob (modify,  text(), 75, 335);
     knob (AnmParams::spread, AnmStyle::spread(), 185, 335);
     knob (AnmParams::scan,   AnmStyle::scan(), 295, 335);
     segs (sizeMode, { "Free", "Sync" }, { 263, 273, 64, 18 });
     segs (scanMode, { "Auto", "Manual" }, { 251, 403, 88, 18 });
 
-    // Right column (milestones 2 and 3)
-    segs (bank,     { "A", "Off", "B" },        { 480, 164, 180, 24 }, false, true);
-    segs (modifier, { "1", "2", "3" },          { 480, 200, 180, 24 }, false, true);
-    segs (routing,  { "In", "Out", "Feed" },    { 480, 236, 180, 24 }, false, true);
+    // Right column (Bank, Modifier, Routing: milestone 2; Preset: milestone 3)
+    segs (bank,     { "A", "Off", "B" },        { 480, 164, 180, 24 });
+    segs (modifier, { "1", "2", "3" },          { 480, 200, 180, 24 });
+    segs (routing,  { "In", "Out", "Feed" },    { 480, 236, 180, 24 });
     segs (preset,   { "Left", "Live", "Right" },{ 480, 272, 180, 24 }, false, true);
     action ("Save left",  { 480, 306, 86, 22 }, true, 11.0f);
     action ("Save right", { 574, 306, 86, 22 }, true, 11.0f);
@@ -182,6 +182,26 @@ void AnamnesisPanel::updateTexts()
     else
         scanText = anm::autoScanOn (P.scan) ? "auto " + juce::String (juce::roundToInt (P.scan * 100.0f)) + "%" : juce::String ("off");
 
+    // Modify and the modifier read-out
+    const int kind = anm::modifierKind (P.bank, P.modifier);
+    char buf[96];
+    anm::modifyText (kind, P.modify, true, buf, (int) sizeof (buf));
+    modifyText = buf;
+    if (kind == anm::ModNone)
+    {
+        readoutTitle = "Modifier off";
+        readoutDetail = "pick bank A or B to shape the echoes";
+    }
+    else
+    {
+        static const char* routes[3] = { "In: builds up", "Out: steady", "Feed: to memory" };
+        readoutTitle = juce::String (anm::modifierCode (kind)) + "  " + anm::modifierName (kind);
+        anm::modifyText (kind, P.modify, false, buf, (int) sizeof (buf));
+        readoutDetail = juce::String (buf);
+        readoutRoute = routes[juce::jlimit (0, 2, P.routing)];
+    }
+    if (kind == anm::ModNone) readoutRoute = {};
+
     // Tap only works in Free (in Sync, Logic's tempo sets Size)
     if (tapButton != nullptr)
     {
@@ -275,35 +295,31 @@ void AnamnesisPanel::paint (juce::Graphics& g)
 
     // Knob labels and values
     struct L { const char* name; float x, y; const juce::String* value; };
-    const juce::String neutral ("neutral");
     const L labels[6] = { { "Level", 75, 250, &levelText }, { "Repeats", 185, 250, &repeatsText }, { "Size", 295, 250, &sizeText },
-                          { "Modify", 75, 380, &neutral }, { "Spread", 185, 380, &spreadText }, { "Scan", 295, 380, &scanText } };
+                          { "Modify", 75, 380, &modifyText }, { "Spread", 185, 380, &spreadText }, { "Scan", 295, 380, &scanText } };
     for (int i = 0; i < 6; ++i)
     {
-        const float a = i == 3 ? dimAlpha : 1.0f;
-        textAt (g, labels[i].name, labels[i].x, labels[i].y, text().withMultipliedAlpha (a), 12.0f);
-        textAt (g, *labels[i].value, labels[i].x, labels[i].y + 15.0f, muted().withMultipliedAlpha (a), 11.0f);
+        textAt (g, labels[i].name, labels[i].x, labels[i].y, text(), 12.0f);
+        textAt (g, *labels[i].value, labels[i].x, labels[i].y + 15.0f, muted(), 11.0f);
     }
 
     g.setColour (stripLine());
     g.fillRect (372.0f, 166.0f, 1.0f, 254.0f);
 
-    // Right column labels and the modifier read-out (dimmed: milestones 2 and 3)
+    // Right column labels (Preset dimmed: milestone 3) and the modifier read-out
     const auto dimText = text().withMultipliedAlpha (dimAlpha);
-    textAt (g, "Bank", 392, 180, dimText, 12.0f, juce::Justification::centredLeft);
-    textAt (g, "Modifier", 392, 216, dimText, 12.0f, juce::Justification::centredLeft);
-    textAt (g, "Routing", 392, 252, dimText, 12.0f, juce::Justification::centredLeft);
+    textAt (g, "Bank", 392, 180, text(), 12.0f, juce::Justification::centredLeft);
+    textAt (g, "Modifier", 392, 216, text(), 12.0f, juce::Justification::centredLeft);
+    textAt (g, "Routing", 392, 252, text(), 12.0f, juce::Justification::centredLeft);
     textAt (g, "Preset", 392, 288, dimText, 12.0f, juce::Justification::centredLeft);
-    {
-        juce::Graphics::ScopedSaveState s (g);
-        g.setOpacity (dimAlpha);
-        g.setColour (strip().withAlpha (dimAlpha));
-        g.fillRoundedRectangle (392.0f, 356.0f, 268.0f, 44.0f, 5.0f);
-        g.setColour (stripLine().withAlpha (dimAlpha));
-        g.drawRoundedRectangle (392.5f, 356.5f, 267.0f, 43.0f, 5.0f, 1.0f);
-    }
-    textAt (g, "Modifier off", 404, 374, dimText, 12.0f, juce::Justification::centredLeft);
-    textAt (g, "pick bank A or B to shape the echoes", 404, 391, muted().withMultipliedAlpha (dimAlpha), 11.0f, juce::Justification::centredLeft);
+    g.setColour (strip());
+    g.fillRoundedRectangle (392.0f, 356.0f, 268.0f, 44.0f, 5.0f);
+    g.setColour (stripLine());
+    g.drawRoundedRectangle (392.5f, 356.5f, 267.0f, 43.0f, 5.0f, 1.0f);
+    textAt (g, readoutTitle, 404, 374, text(), 12.0f, juce::Justification::centredLeft);
+    if (readoutRoute.isNotEmpty())
+        textAt (g, readoutRoute, 648, 374, muted(), 11.0f, juce::Justification::centredRight);
+    textAt (g, readoutDetail, 404, 391, muted(), 11.0f, juce::Justification::centredLeft);
 
     // Options row labels
     textAt (g, "Options", 20, 502, muted().withMultipliedAlpha (dimAlpha), 11.0f, juce::Justification::centredLeft);
@@ -313,12 +329,7 @@ void AnamnesisPanel::paint (juce::Graphics& g)
 void AnamnesisPanel::paintOverChildren (juce::Graphics& g)
 {
     // Milestone tags (not dimmed, so they can be read)
-    tag (g, 95, 304, "M2");                         // Modify
-    tag (g, 442, 168, "M2");                        // Bank
-    tag (g, 452, 204, "M2");                        // Modifier
-    tag (g, 446, 240, "M2");                        // Routing
     tag (g, 440, 276, "M3");                        // Preset
-    tag (g, 628, 340, "M2");                        // modifier read-out
     tag (g, 108, 448, "M3");                        // Engage
     tag (g, 238, 448, "M3");                        // Loop
     tag (g, 498, 448, "M3");                        // Hold to scan

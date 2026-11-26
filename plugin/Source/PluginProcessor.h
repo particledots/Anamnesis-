@@ -59,6 +59,8 @@ private:
     std::atomic<int> zoom { kDefaultZoom };
     bool lastClear = false;
     std::atomic<double> hostBpm { 120.0 }, hostBeatsPerBar { 4.0 };     // from Logic (read by the panel too)
+    std::atomic<double> hostBeats { -1.0 };                              // Logic's position and transport
+    std::atomic<bool> hostPlaying { false };
 
     // Fast access to the current control values (audio thread).
     std::atomic<float> *pLevel {}, *pRepeats {}, *pSize {}, *pSizeMode {}, *pModify {}, *pSpread {}, *pScan {}, *pScanMode {};

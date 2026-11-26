@@ -6,7 +6,7 @@ Bliss. The Habit has no published firmware; its manual and web guide were used o
 
 In Logic: **Audio Units > particledots > Anamnesis** (an audio effect: put it in an Audio FX slot, mono or stereo).
 
-Status: **milestone 1 of 3 done (version 0.1.0, tested in Logic on 2026-11-25 on both Macs: M4 Mac mini with Logic 11.2.2 and Intel Mac with Logic 10.7.8).** Next: milestone 2 (the modifiers and routing).
+Status: **milestone 1 of 3 done (version 0.1.0, tested in Logic on 2026-11-25 on both Macs: M4 Mac mini with Logic 11.2.2 and Intel Mac with Logic 10.7.8). Milestone 2 (version 0.2.0, the modifiers and routing) is built and waiting for its Logic test on the Intel Mac.**
 
 ## Installing
 
@@ -20,15 +20,16 @@ Everything you play is recorded into a 3-minute memory, all the time. Two play h
 
 ```
 input ──► MEMORY (3 minutes, always recording) ──► Scan play head ─────────┐
-                                               └─► Spread play head ──┐    │
-                                                                      ▼    ▼
-                                                     ECHO (Size, Repeats) ──► Level ──► + dry ──► output
+  ▲                                            └─► Spread play head ──┐    │
+  │                                                                   ▼    ▼
+  │                                   [In] ──► ECHO (Size, Repeats) ──► [Out] ──► Level ──► + dry ──► output
+  └──────────── Feed: Repeats x the echo ◄─────────────────────────────┘
 ```
 
 With Scan and Spread at zero it is a plain, clean delay. Turning up Scan plays echoes of the past; Spread adds a second
-echo further back in the memory.
+echo further back in the memory. A modifier (Bank A or B) shapes the echoes, at the place Routing chooses.
 
-## The controls (milestone 1)
+## The controls
 
 | Control | What it does |
 |---|---|
@@ -41,6 +42,37 @@ echo further back in the memory.
 | Spread | Left-most = off. Turning it up adds a second echo, further back in the memory by the Spread distance (up to 3 minutes). It follows Scan. |
 | Clear memory | Empties the memory and the echo (10 ms fade, no click). Can be automated: it clears when it switches on. |
 | Zoom | Panel size 75% to 200% (saved with the project). |
+| Bank | A, Off or B: picks a bank of three modifiers, or none. |
+| Modifier | 1, 2 or 3: picks the modifier in the bank (the read-out under Preset names it and what it is doing). |
+| Modify | Sets the modifier. 12:00 is neutral for every modifier (exactly the same as Bank Off); the two sides do different things (below). Double-click returns to 12:00. |
+| Routing | **In**: the modifier sits inside the echo's feedback loop, so it builds up on every repeat. **Out**: after the echo, so every echo sounds the same. **Feed**: as Out, and the modified echo is recorded back into the memory with what you play (the strip shows it); the echo's own feedback is off and Repeats sets the feedback of the whole loop, so Spread becomes a classic multi-tap and Scan reaches back into echoes too. Routing works with Bank Off as well. |
+
+Switching Bank, Modifier or Routing while audio plays crossfades (the old modifier fades out in 15 ms, the new one fades in
+in 15 ms; the routing's feedback paths cross over in 20 ms): no clicks.
+
+### The six modifiers (our own designs, after the Habit guide's descriptions)
+
+| | Counter-clockwise | Clockwise |
+|---|---|---|
+| **A1 Stepped speed** | reverse: 1x, 1.5x, 2x, 3x, 4x | forward: 1.5x, 2x, 3x, 4x (fifths and octaves, so the echoes stay in key) |
+| **A2 Stability** | wow, flutter, tape filtering, a little saturation, growing; no noise | the same, plus tape hiss |
+| **A3 Trimmer** | cuts the end of every echo | cuts the start of every echo |
+| **B1 Smooth speed** | reverse, 1x up to 2x | forward, 1x up to 2x |
+| **B2 Filter** | low-pass, closing from 20 kHz to 80 Hz | high-pass, rising from 20 Hz to 8 kHz |
+| **B3 Dropper** | random drops (more as it turns) | a pattern of drops, the same in every echo (more drops per echo as it turns) |
+
+- **Speeds**: at 12:00 the echoes play at normal speed. Forward speeds read the echo in 70 ms pieces, crossfaded (like a
+  pitch shifter); reverse plays a whole Size backwards (up to 3 s). Smooth speed spends the first stretch of the knob on a
+  fine detune (a few cents, for chorus and detune) and reaches an octave at the end. The delay this adds is taken off the
+  echo's time, so the echoes stay on their Size grid (when Size is long enough).
+- **Trimmer** steps: 1/8, 1/4, 1/3, 3/8, 1/2, 5/8, 2/3, 3/4, 7/8 of Size. With Size in Sync while Logic plays, the Size grid
+  lines up with Logic's beats, so "cut the start: 1/2" cuts the first half of every beat (or of every note value).
+- **Filter**: its resonance grows as it turns. In In and Feed it can pile up and sing (like the pedal); limiters in the loop
+  keep it bounded.
+- **Dropper**: some drops are smooth and shallow, some abrupt and deep. Near the end both sides become granular.
+
+Decisions: Trimmer's directions follow the Habit guide's diagram (counter-clockwise cuts the end, clockwise the start; the
+milestone 2 brief had them the other way round). The 28-scale quantizer is not used (see Plan).
 
 Scan and Spread are linked to Size so they stay in time: their distances snap to a grid made of Size (quarters and thirds
 of Size up to 2 Sizes, halves up to 8 Sizes, whole Sizes beyond).
@@ -51,15 +83,13 @@ and where the Scan (amber) and Spread (teal) play heads are.
 **Stereo**: stereo in and out (or mono in and out). Both sides use the same heads, times and random choices, so the stereo
 picture of what you play is kept. (Wide spread, milestone 3, will spread the two echoes left and right.)
 
-**Memory**: about 93 MB at 48 kHz and 186 MB at 96 kHz (3-minute stereo memory plus a 60 s stereo echo). At 176.4 and
-192 kHz the memory keeps every second sample (filtered), about 233 MB. It is reserved when Logic prepares the plugin, never
+**Memory**: about 96 MB at 48 kHz and 191 MB at 96 kHz (3-minute stereo memory, a 60 s stereo echo, and two 3.4 s
+recordings the modifiers read from). At 176.4 and 192 kHz the memory keeps every second sample (filtered), about 243 MB. It is reserved when Logic prepares the plugin, never
 while audio plays, and kept when Logic prepares again at the same sample rate. If it cannot be reserved, the plugin passes
 the dry sound through and says so on the panel.
 
 ## Dimmed on the panel (later milestones)
 
-- **Milestone 2**: Modify, Bank A / Off / B, Modifier 1 / 2 / 3, Routing In / Out / Feed, the modifier read-out. The six
-  modifiers: Stepped speed, Stability, Trimmer (bank A); Smooth speed, Filter, Dropper (bank B).
 - **Milestone 3**: Engage, Loop, Hold to scan, Preset Left / Live / Right with Save left / Save right, and the options:
   Collect, Wipe, Always, Latch, Dry kill, Trails, Wide spread, Memory dry (Scanning / Off / On).
 
@@ -85,22 +115,33 @@ muted while engaged and comes back when Engage is off.
 - Bounce / ramp movement of the knobs (Logic's automation does this today).
 - Saving and loading the memory as a WAV file.
 - An option to pause the memory while Logic is stopped (today it records whatever Logic sends, like the pedal).
+- Reverse speeds playing more than 3 s backwards for very long Sizes.
 
 ## How it is built and checked
 
 GitHub Actions builds everything; nothing is compiled on a Mac by hand. Every push runs:
 
-- **Engine self-test** (`engine/tests`, plain C++, no Logic): 146 checks: echo timing to the sample at several sample
-  rates, Level and Repeats, Size free and synced, no pitch bend and no clicks while Size moves, Repeats at infinite
-  steady for a minute and bounded through 5 minutes of loud pile-up, Scan reading the right moment up to 3 minutes back
-  (also at 192 kHz), Spread, Auto Scan wandering and returning, empty memory silent, Clear, memory size at every rate,
-  memory not available, preparing again, Logic's block sizes, bad input, stereo and mono, the strip picture, defaults,
-  CPU.
-- **Plugin-layer check** (`check/`, `AnamnesisCheck`): 96 checks: the control list against the stored 0.1.0 list
+- **Engine self-test** (`engine/tests`, plain C++, no Logic): 326 checks. Milestone 1: echo timing to the sample at
+  several sample rates, Level and Repeats, Size free and synced, no pitch bend and no clicks while Size moves, Repeats at
+  infinite steady for a minute and bounded through 5 minutes of loud pile-up, Scan reading the right moment up to 3 minutes
+  back (also at 192 kHz), Spread, Auto Scan wandering and returning, empty memory silent, Clear, memory size at every rate,
+  memory not available, preparing again, Logic's block sizes, bad input, stereo and mono, the strip picture, defaults, CPU.
+  Milestone 2: Modify 12:00 = Bank Off bit for bit (every modifier, every routing, with Bank flipping); every speed step
+  measured (1.5x to 4x forward, 1x to 4x reverse, Smooth speed and its fine detune, at 44.1 to 192 kHz); reverse
+  playback; In building up and Out staying the same, with the echoes on the Size grid; Stability's wobble, filtering and
+  hiss; Trimmer's cut amounts and sides; Filter direction and its singing kept bounded; Dropper's pattern identical in
+  every echo, its random side not, granular at the end; Feed's loop timing, Repeats, the memory recording the echoes,
+  Spread as a multi-tap; the Size grid on Logic's beats; no clicks when Modify, Bank, Modifier or Routing change; every
+  modifier at both ends in every routing with Repeats infinite and loud input; 5 minutes of Feed with the filter singing
+  and of In at 4x; block sizes; CPU.
+- **Plugin-layer check** (`check/`, `AnamnesisCheck`): 110 checks: the control list against the stored 0.1.0 list
   (`check/golden/`), saved projects from every earlier version, first-load echo, hosting like Logic (mono and stereo,
   44.1 to 192 kHz, odd block sizes, bypass, Logic's tempo, Clear by automation), the panel at every zoom size with the
-  title measured and checked in the drawn pixels, dimmed and live controls, Tap, heavy automation of every control. It
-  also draws pictures of the panel (the `panel-pictures` download of each run).
+  title measured and checked in the drawn pixels, dimmed and live controls, Tap, heavy automation of every control;
+  milestone 2: Logic's read-out of Modify for each modifier, the panel's Modify text and modifier read-out (and that they
+  fit for every modifier and setting), Modify 12:00 = Bank Off bit for bit through the plugin, Bank / Modifier / Routing /
+  Modify automated hard without clicks, the Size grid following Logic's beats. It also draws pictures of the panel (the
+  `panel-pictures` download of each run, one per modifier included).
 - **macOS build**: AU and VST3, universal binary checked with `lipo`, ad-hoc signed, Apple's `auval`, `pluginval`
   (strictness 5, AU and VST3), and the package with the installer and INSTALL.txt.
 
@@ -117,7 +158,13 @@ Codes (fixed for good): AU type `aufx`, plugin code `Anms`, manufacturer `Pdot`,
 - **Phenome-Eon**: reserving the long memory with calloc and failing safely (`Tape.h`); the lock-free waveform picture
   idea (the memory strip).
 - **COMPLICATOR**: the repo layout, workflow, check program, README and CHANGELOG style, installer.
-- New: the memory with its two play heads, Auto Scan, Size sync, the Size grid, the panel.
+- **Mimic-Phon** (milestone 2): Flip's chunk reader (play heads reading a recording in crossfaded chunks) became the
+  speed reader of Stepped speed and Smooth speed, extended to read forward at any speed as well as backwards; the double
+  precision filter form with denormal guarding.
+- **Phenome-Eon** (milestone 2): the octaves-and-fifths "Steps" list of Pitch Snap became Stepped speed's steps.
+- New: the memory with its two play heads, Auto Scan, Size sync, the Size grid, the panel; milestone 2: Stability (wow,
+  flutter, tape filter, hiss), Trimmer, Filter (a state-variable filter), Dropper, the two modifier slots with their
+  crossfades, Feed routing, the delay compensation, the Size grid on Logic's beats.
 
 Fonts: Space Grotesk (SIL Open Font License, `plugin/Fonts/OFL-SpaceGrotesk.txt`), built into the plugin.
 

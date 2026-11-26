@@ -15,6 +15,8 @@ AnamnesisAudioProcessor::AnamnesisAudioProcessor()
     pRouting = p (routing); pEngage = p (engage); pLoop = p (loop); pScanHold = p (scanHold); pClear = p (clearMemory);
     pCollect = p (collect); pWipe = p (wipe); pAlways = p (always); pLatch = p (latch); pDryKill = p (dryKill);
     pTrails = p (trails); pMemoryDry = p (memoryDry); pWide = p (wideSpread);
+    readout->bankValue = pBank;
+    readout->modifierValue = pModifier;
 }
 
 anm::Params AnamnesisAudioProcessor::readParams() const
@@ -31,6 +33,7 @@ anm::Params AnamnesisAudioProcessor::readParams() const
     P.collect = b (pCollect); P.wipe = b (pWipe); P.always = b (pAlways); P.latch = b (pLatch);
     P.dryKill = b (pDryKill); P.trails = b (pTrails); P.memoryDry = i (pMemoryDry); P.wideSpread = b (pWide);
     P.bpm = hostBpm.load(); P.beatsPerBar = hostBeatsPerBar.load();
+    P.hostBeats = hostBeats.load(); P.hostPlaying = hostPlaying.load();
     return P;
 }
 
@@ -66,13 +69,21 @@ void AnamnesisAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, ju
     midi.clear();
 
     // Logic's tempo and time signature (for Size in Sync). If Logic gives none, the last known values (or 120, 4/4) stay.
+    // Its position and transport: while it plays, Size in Sync lines its grid up with Logic's beats.
+    bool playing = false;
+    double beats = -1.0;
     if (auto* ph = getPlayHead())
         if (auto pos = ph->getPosition())
         {
             if (auto bpm = pos->getBpm()) hostBpm = anm::safeBpm (*bpm);
             if (auto sig = pos->getTimeSignature(); sig.hasValue() && sig->denominator > 0)
                 hostBeatsPerBar = anm::safeBeatsPerBar (sig->numerator * 4.0 / sig->denominator);
+            if (auto ppq = pos->getPpqPosition(); ppq.hasValue() && std::isfinite (*ppq))
+                beats = *ppq;
+            playing = pos->getIsPlaying();
         }
+    hostBeats = beats;
+    hostPlaying = playing;
 
     const anm::Params P = readParams();
     readout->sizeMode = P.sizeMode;

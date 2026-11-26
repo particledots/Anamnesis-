@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.0 — milestone 2 (built, waiting for the Logic test on the Intel Mac)
+
+- **Modify, Bank A / Off / B, Modifier 1 / 2 / 3, Routing In / Out / Feed** are live, with the modifier read-out on the
+  panel (their M2 tags removed; nothing else on the panel changed). The control list is unchanged (24 controls).
+- **The six modifiers** (our own designs): A1 Stepped speed (forward 1.5x to 4x, reverse 1x to 4x), A2 Stability (wow,
+  flutter, tape filtering; clockwise adds hiss), A3 Trimmer (cuts the end counter-clockwise, the start clockwise, 1/8 to
+  7/8 of Size, as the Habit guide's diagram shows), B1 Smooth speed (fine detune to 2x, forward / reverse), B2 Filter
+  (low-pass / high-pass with growing resonance), B3 Dropper (random / a pattern repeated in every echo; granular at the
+  end). Modify 12:00 is neutral for all of them, bit for bit the same as Bank Off.
+- **Routing**: In (builds up on every repeat), Out (every echo the same), Feed (the echo is recorded back into the memory,
+  Repeats sets the whole loop, Spread becomes a multi-tap). Switching Bank, Modifier or Routing crossfades.
+- The delay the speed modifiers and Stability add is taken off the echo's time, so the echoes stay on the Size grid.
+- Size in Sync while Logic plays: the Size grid lines up with Logic's beats (Trimmer, Dropper's pattern, Auto Scan's dice).
+- Logic's read-out of Modify names what the chosen modifier does ("forward 4x", "low-pass 1.2 kHz" ...).
+- Memory: two 3.4 s recordings for the modifiers (about 3 MB at 48 kHz, 10 MB at 192 kHz).
+- Engine self-test: 326 checks. Plugin-layer check: 110 checks, plus a picture of the panel for each modifier.
+- Build: the engine-test job's extra result annotations (engine cpu, memory at, auto scan ...) now appear (the pattern
+  allows ctest's "1: " in front of each line).
+
 ## 0.1.0 — milestone 1 (built and tested in Logic 2026-11-25)
 
 - First build. AU and VST3, universal binary (Apple Silicon and Intel), macOS 11 or newer, ad-hoc signed. In Logic:
