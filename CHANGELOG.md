@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.1 — new panel look (built 2026-11-26, Logic test pending)
+
+- **The panel restyled** to the approved draft (2026-11-26): black with gold hairline frames in sections (Memory, Echo,
+  Recall, Modifier, Presets, Perform, Options), cream knob caps in gold range arcs, blue lamps as the only colour,
+  spaced capitals, the title in Marcellus (built in, SIL Open Font License).
+- **Flow lines**: Size to the "now" end of the memory (Repeats joins it, dotted), Spread and Scan up to their play heads
+  (the line ends follow the heads); the Size line hops over the other two.
+- Modify moved into the Modifier section and Memory dry into Recall. The read-out's middle line wraps onto two lines.
+  The Scan play head is blue (was amber), the Spread head cream and dashed (was teal).
+- Window 680 x 600 at 100% (was 680 x 560). Zoom 75% to 200% as before.
+- **Lighter to draw**: the fixed artwork is stored as a picture; 30 times a second only the live areas are redrawn.
+  About half of 0.3.0's drawing time per update (0.7 against 1.5 ms at 100%, 1.5 against 2.9 ms at 200%, measured on the
+  same Linux machine with the same check).
+- Nothing else changed: the sound, the engine, the control list (24 controls), the codes and saved projects.
+- Plugin-layer check: 141 checks (title checked in the drawn pixels inside its ornaments, the stored artwork, the
+  drawing cost, the read-out wrapping for every modifier).
+
 ## 0.3.0 — milestone 3 (built and tested in Logic 2026-11-25)
 
 - **Engage, Loop, Hold to scan, Preset Left / Live / Right with Save left / Save right, the options (Collect, Wipe,

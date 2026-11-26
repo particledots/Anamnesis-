@@ -7,85 +7,108 @@ using namespace AnmStyle;
 
 namespace
 {
+    juce::Typeface::Ptr load (const char* data, int size)
+    {
+        return juce::Typeface::createSystemTypefaceFor (data, (size_t) size);
+    }
     struct Faces
     {
-        juce::Typeface::Ptr regular = juce::Typeface::createSystemTypefaceFor (AnmFontData::SpaceGroteskRegular_ttf,
-                                                                               (size_t) AnmFontData::SpaceGroteskRegular_ttfSize);
-        juce::Typeface::Ptr medium  = juce::Typeface::createSystemTypefaceFor (AnmFontData::SpaceGroteskMedium_ttf,
-                                                                               (size_t) AnmFontData::SpaceGroteskMedium_ttfSize);
+        juce::Typeface::Ptr regular = load (AnmFontData::SpaceGroteskRegular_ttf, AnmFontData::SpaceGroteskRegular_ttfSize);
+        juce::Typeface::Ptr medium  = load (AnmFontData::SpaceGroteskMedium_ttf, AnmFontData::SpaceGroteskMedium_ttfSize);
+        juce::Typeface::Ptr title   = load (AnmFontData::MarcellusRegular_ttf, AnmFontData::MarcellusRegular_ttfSize);
     };
     Faces& faces() { static Faces f; return f; }
+
+    juce::Font make (juce::Typeface::Ptr face, float size, float spacing)
+    {
+        // If a font could not be read for any reason, fall back to the system font rather than draw nothing.
+        juce::FontOptions o = face != nullptr ? juce::FontOptions (face) : juce::FontOptions();
+        juce::Font f (o.withPointHeight (size));
+        if (spacing > 0.0f)
+            f = f.withExtraKerningFactor (spacing / f.getHeight());
+        return f;
+    }
 }
 
-juce::Font AnmStyle::font (float size, bool medium)
+juce::Font AnmStyle::font (float size, bool medium, float spacing)
 {
-    auto face = medium ? faces().medium : faces().regular;
-    // If a font could not be read for any reason, fall back to the system font rather than draw nothing.
-    juce::FontOptions o = face != nullptr ? juce::FontOptions (face) : juce::FontOptions();
-    return juce::Font (o.withPointHeight (size));
+    return make (medium ? faces().medium : faces().regular, size, spacing);
+}
+
+juce::Font AnmStyle::titleFont()
+{
+    return make (faces().title, titleSize, 8.0f);
 }
 
 // ------------------------------------------------------------------------------------------------ look
 
 AnmLookAndFeel::AnmLookAndFeel()
 {
-    setColour (juce::PopupMenu::backgroundColourId, control());
+    setColour (juce::PopupMenu::backgroundColourId, menu());
     setColour (juce::PopupMenu::textColourId, text());
-    setColour (juce::PopupMenu::highlightedBackgroundColourId, lit());
+    setColour (juce::PopupMenu::highlightedBackgroundColourId, lampFill());
     setColour (juce::PopupMenu::highlightedTextColourId, text());
-    setColour (juce::ComboBox::textColourId, muted());
-    setColour (juce::ComboBox::backgroundColourId, control());
-    setColour (juce::ComboBox::outlineColourId, controlLine());
-    setColour (juce::ComboBox::arrowColourId, muted());
-    setColour (juce::BubbleComponent::backgroundColourId, control());
-    setColour (juce::BubbleComponent::outlineColourId, controlLine());
+    setColour (juce::ComboBox::textColourId, text());
+    setColour (juce::ComboBox::backgroundColourId, panel());
+    setColour (juce::ComboBox::outlineColourId, gold());
+    setColour (juce::ComboBox::arrowColourId, gold());
+    setColour (juce::BubbleComponent::backgroundColourId, menu());
+    setColour (juce::BubbleComponent::outlineColourId, gold());
     setColour (juce::TooltipWindow::textColourId, text());
     setColour (juce::Label::textColourId, text());
 }
 
 void AnmLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int w, int h, float pos, float start, float end,
-                                       juce::Slider& s)
+                                       juce::Slider&)
 {
-    const auto r = juce::Rectangle<float> ((float) x, (float) y, (float) w, (float) h).reduced (0.75f);
-    const float radius = juce::jmin (r.getWidth(), r.getHeight()) * 0.5f;
+    const auto r = juce::Rectangle<float> ((float) x, (float) y, (float) w, (float) h);
+    const float u = juce::jmin (r.getWidth(), r.getHeight()) / 62.0f;     // one panel unit
     const auto c = r.getCentre();
-    g.setColour (knob());
-    g.fillEllipse (c.x - radius, c.y - radius, radius * 2.0f, radius * 2.0f);
-    g.setColour (knobLine());
-    g.drawEllipse (c.x - radius, c.y - radius, radius * 2.0f, radius * 2.0f, 1.5f);
+    auto disc = [&] (float radius, juce::Colour fill, juce::Colour line, float lw)
+    {
+        g.setColour (fill);
+        g.fillEllipse (c.x - radius, c.y - radius, radius * 2.0f, radius * 2.0f);
+        g.setColour (line);
+        g.drawEllipse (c.x - radius, c.y - radius, radius * 2.0f, radius * 2.0f, lw);
+    };
+    disc (22.0f * u, skirt(), skirtLine(), 1.2f * u);
+    disc (16.0f * u, cap(), capLine(), 0.8f * u);
 
     const float a = start + pos * (end - start);
-    const juce::Point<float> tip (c.x + 0.85f * radius * std::sin (a), c.y - 0.85f * radius * std::cos (a));
+    const float sx = std::sin (a), sy = -std::cos (a);
     juce::Path p;
-    p.startNewSubPath (c);
-    p.lineTo (tip);
-    g.setColour (s.findColour (juce::Slider::rotarySliderFillColourId));
-    g.strokePath (p, juce::PathStrokeType (3.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    p.startNewSubPath (c.x + 5.0f * u * sx, c.y + 5.0f * u * sy);
+    p.lineTo (c.x + 15.0f * u * sx, c.y + 15.0f * u * sy);
+    g.setColour (pointer());
+    g.strokePath (p, juce::PathStrokeType (2.0f * u, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 }
 
 void AnmLookAndFeel::drawComboBox (juce::Graphics& g, int w, int h, bool, int, int, int, int, juce::ComboBox&)
 {
     const auto r = juce::Rectangle<float> (0.0f, 0.0f, (float) w, (float) h).reduced (0.5f);
-    g.setColour (control());
-    g.fillRoundedRectangle (r, 4.0f);
-    g.setColour (controlLine());
-    g.drawRoundedRectangle (r, 4.0f, 1.0f);
+    g.setColour (gold());
+    g.drawRoundedRectangle (r, r.getHeight() * 0.5f, 0.8f);
+    juce::Path chevron;
+    const float cx = (float) w - 13.0f, cy = (float) h * 0.5f;
+    chevron.startNewSubPath (cx - 4.0f, cy - 2.5f);
+    chevron.lineTo (cx, cy + 2.5f);
+    chevron.lineTo (cx + 4.0f, cy - 2.5f);
+    g.strokePath (chevron, juce::PathStrokeType (0.9f));
 }
 
 void AnmLookAndFeel::positionComboBoxText (juce::ComboBox& box, juce::Label& label)
 {
     label.setBorderSize (juce::BorderSize<int> (0));
-    label.setBounds (0, 0, box.getWidth(), box.getHeight());
+    label.setBounds (0, 0, box.getWidth() - 14, box.getHeight());
     label.setJustificationType (juce::Justification::centred);
-    label.setFont (font (11.0f));
+    label.setFont (font (11.0f, false, 1.0f));
 }
 
 // ------------------------------------------------------------------------------------------------ knob
 
-AnmKnob::AnmKnob (juce::AudioProcessorValueTreeState& state, const char* paramId, juce::Colour pointer)
+AnmKnob::AnmKnob (juce::AudioProcessorValueTreeState& state, const char* paramId)
     : juce::Slider (juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::NoTextBox)
 {
-    setColour (juce::Slider::rotarySliderFillColourId, pointer);
     setRotaryParameters (juce::degreesToRadians (-135.0f), juce::degreesToRadians (135.0f), true);
     setPopupDisplayEnabled (true, true, nullptr);
     setVelocityModeParameters (0.6, 1, 0.0, true, juce::ModifierKeys::shiftModifier);   // hold Shift for fine moves
@@ -94,51 +117,114 @@ AnmKnob::AnmKnob (juce::AudioProcessorValueTreeState& state, const char* paramId
         setDoubleClickReturnValue (true, p->convertFrom0to1 (p->getDefaultValue()));   // double-click: back to default
 }
 
-// ------------------------------------------------------------------------------------------------ segments
+// ------------------------------------------------------------------------------------------------ round button
 
-AnmSegments::AnmSegments (juce::RangedAudioParameter& p, juce::StringArray l, bool isToggle, bool isButton)
-    : param (p), labels (std::move (l)), toggle (isToggle), button (isButton),
+void AnmDraw::roundButton (juce::Graphics& g, juce::Rectangle<float> r, const juce::String& label, bool lit)
+{
+    const float cx = r.getX() + 20.0f, cy = r.getCentreY();
+    if (lit)
+    {
+        g.setColour (lamp().withAlpha (0.18f));
+        g.fillEllipse (cx - 19.0f, cy - 19.0f, 38.0f, 38.0f);
+        g.setColour (lampFill());
+        g.fillEllipse (cx - roundR, cy - roundR, roundR * 2.0f, roundR * 2.0f);
+        g.setColour (lamp());
+        g.drawEllipse (cx - roundR, cy - roundR, roundR * 2.0f, roundR * 2.0f, 1.4f);
+    }
+    else
+    {
+        g.setColour (skirt());
+        g.fillEllipse (cx - roundR, cy - roundR, roundR * 2.0f, roundR * 2.0f);
+        g.setColour (gold());
+        g.drawEllipse (cx - roundR, cy - roundR, roundR * 2.0f, roundR * 2.0f, 1.1f);
+    }
+    const auto f = font (labelSize, false, labelSpacing);
+    textIn (g, label, f, cx + roundR + roundTextGap, cy + 4.0f, text(), juce::Justification::centredLeft);
+}
+
+// ------------------------------------------------------------------------------------------------ switches
+
+AnmSegments::AnmSegments (juce::RangedAudioParameter& p, juce::StringArray l, Kind k)
+    : param (p), labels (std::move (l)), kind (k),
       attachment (p, [this] (float v) { selected = juce::roundToInt (v); repaint(); }, nullptr)
 {
     attachment.sendInitialUpdate();
 }
 
+float AnmSegments::naturalWidth (const juce::String& label, Kind k)
+{
+    const float t = textWidth (label, AnmDraw::labelSize, false, AnmDraw::labelSpacing);
+    if (k == Kind::Round) return 20.0f + AnmDraw::roundR + AnmDraw::roundTextGap + t + 4.0f;
+    return 17.0f + t + 4.0f;                                           // Option: lamp, gap, label
+}
+
 void AnmSegments::paint (juce::Graphics& g)
 {
-    const auto r = getLocalBounds().toFloat().reduced (0.5f);
-    const float radius = button ? 6.0f : 4.0f;
-    g.setColour (button ? knob() : control());
-    g.fillRoundedRectangle (r, radius);
-    g.setColour (button ? knobLine() : controlLine());
-    g.drawRoundedRectangle (r, radius, 1.0f);
-
+    const auto b = getLocalBounds().toFloat();
     const int n = labels.size();
-    const float cw = r.getWidth() / (float) n;
-    for (int i = 0; i < n; ++i)
+    const auto f = font (11.0f, false, 1.2f);
+
+    switch (kind)
     {
-        const bool on = toggle ? (selected == 1) : (selected == i);
-        const auto seg = juce::Rectangle<float> (r.getX() + cw * (float) i, r.getY(), cw, r.getHeight());
-        if (on)
+        case Kind::Round:
+            AnmDraw::roundButton (g, b, labels[0], selected == 1 || held);
+            return;
+
+        case Kind::Option:
         {
-            g.setColour (lit());
-            g.fillRoundedRectangle (seg.reduced (button ? 1.0f : 0.0f), radius);
+            const bool on = selected == 1;
+            drawLamp (g, b.getX() + 8.0f, b.getCentreY(), on, on ? 3.2f : 3.0f);
+            textIn (g, labels[0], font (AnmDraw::labelSize, false, 1.3f), b.getX() + 17.0f, b.getCentreY() + 4.0f,
+                    on ? text() : soft(), juce::Justification::centredLeft);
+            return;
         }
-        g.setColour (on || button ? text() : muted());
-        g.setFont (font (button ? 12.0f : 11.0f));
-        auto textArea = seg.toNearestInt().reduced (2, 0);
-        if (n == 1) textArea.removeFromRight (textInset);
-        g.drawFittedText (labels[i], textArea, juce::Justification::centred, 1, 0.75f);
+
+        case Kind::List:
+        {
+            const float rowH = b.getHeight() / (float) n;
+            for (int i = 0; i < n; ++i)
+            {
+                const float cy = b.getY() + rowH * ((float) i + 0.5f);
+                const bool on = selected == i;
+                drawLamp (g, b.getX() + 9.0f, cy, on, on ? 3.2f : 3.0f);
+                textIn (g, labels[i], f, b.getX() + 18.0f, cy + 4.0f, on ? text() : muted(), juce::Justification::centredLeft);
+            }
+            return;
+        }
+
+        case Kind::Pill:
+        {
+            const auto r = b.reduced (0.5f);
+            g.setColour (gold());
+            g.drawRoundedRectangle (r, r.getHeight() * 0.5f, 0.7f);
+            const float cw = r.getWidth() / (float) n;
+            for (int i = 1; i < n; ++i)
+                g.fillRect (r.getX() + cw * (float) i - 0.35f, r.getY() + 0.5f, 0.7f, r.getHeight() - 1.0f);
+            for (int i = 0; i < n; ++i)
+            {
+                const bool on = selected == i;
+                const float cx = r.getX() + cw * ((float) i + 0.5f), cy = r.getCentreY();
+                textIn (g, labels[i], f, cx, cy + 4.0f, on ? text() : muted(), juce::Justification::centred);
+                if (on)
+                {
+                    const float tw = widthOf (labels[i], f);
+                    drawLamp (g, cx - tw * 0.5f - 7.0f, cy, true, 2.2f);
+                }
+            }
+            return;
+        }
     }
 }
 
 void AnmSegments::press()
 {
-    if (! isEnabled() || ! toggle) return;
+    if (! isEnabled() || ! isToggle()) return;
     if (momentary && momentary())
     {
         held = true;
         attachment.beginGesture();
         attachment.setValueAsPartOfGesture (1.0f);
+        repaint();
         return;
     }
     attachment.setValueAsCompleteGesture (selected == 1 ? 0.0f : 1.0f);
@@ -150,6 +236,7 @@ void AnmSegments::release()
     held = false;
     attachment.setValueAsPartOfGesture (0.0f);
     attachment.endGesture();
+    repaint();
 }
 
 void AnmSegments::mouseUp (const juce::MouseEvent&) { release(); }
@@ -157,32 +244,40 @@ void AnmSegments::mouseUp (const juce::MouseEvent&) { release(); }
 void AnmSegments::mouseDown (const juce::MouseEvent& e)
 {
     if (! isEnabled()) return;
-    if (toggle)
+    if (isToggle())
     {
         press();
         return;
     }
     const int n = labels.size();
-    const int i = juce::jlimit (0, n - 1, (int) ((float) e.x / (float) getWidth() * (float) n));
+    int i = 0;
+    if (kind == Kind::List) i = juce::jlimit (0, n - 1, (int) ((float) e.y / (float) getHeight() * (float) n));
+    else                    i = juce::jlimit (0, n - 1, (int) ((float) e.x / (float) getWidth() * (float) n));
     attachment.setValueAsCompleteGesture ((float) i);
 }
 
 // ------------------------------------------------------------------------------------------------ action button
 
-AnmButton::AnmButton (juce::String l, float size) : label (std::move (l)), textSize (size) {}
+AnmButton::AnmButton (juce::String l, juce::String s, bool r) : label (std::move (l)), shown (std::move (s)), round (r) {}
 
 void AnmButton::paint (juce::Graphics& g)
 {
-    const auto r = getLocalBounds().toFloat().reduced (0.5f);
     const bool on = down || flashFrames > 0;
-    const float radius = getHeight() > 30 ? 6.0f : 4.0f;
-    g.setColour (on ? lit() : knob());
-    g.fillRoundedRectangle (r, radius);
-    g.setColour (getHeight() > 30 ? muted() : knobLine());
-    g.drawRoundedRectangle (r, radius, 1.0f);
-    g.setColour (text());
-    g.setFont (font (textSize));
-    g.drawFittedText (label, getLocalBounds().reduced (4, 0), juce::Justification::centred, 1, 0.75f);
+    const auto b = getLocalBounds().toFloat();
+    if (round)
+    {
+        AnmDraw::roundButton (g, b, shown, on);
+        return;
+    }
+    const auto r = b.reduced (0.5f);
+    if (on)
+    {
+        g.setColour (lampFill());
+        g.fillRoundedRectangle (r, r.getHeight() * 0.5f);
+    }
+    g.setColour (on ? lamp() : gold());
+    g.drawRoundedRectangle (r, r.getHeight() * 0.5f, on ? 1.1f : 0.7f);
+    textIn (g, shown, font (11.0f, false, 1.2f), r.getCentreX(), r.getCentreY() + 4.0f, text(), juce::Justification::centred);
 }
 
 void AnmButton::mouseDown (const juce::MouseEvent&)

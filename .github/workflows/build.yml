@@ -58,7 +58,7 @@ jobs:
             exit 1
           fi
           echo "::notice::PLUGIN-CHECK: $(grep -h 'plugin checks:' plugin-check.log | head -n 1)"
-          grep -hE "^(title|control list|heavy automation|plugin cpu|bank, modifier|milestone 3)" plugin-check.log | while IFS= read -r line; do echo "::notice::PLUGIN-CHECK: $line"; done
+          grep -hE "^(title|control list|heavy automation|plugin cpu|bank, modifier|milestone 3|drawing|panel texts)" plugin-check.log | while IFS= read -r line; do echo "::notice::PLUGIN-CHECK: $line"; done
 
       - name: Pictures of the panel
         run: |

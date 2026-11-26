@@ -15,12 +15,15 @@
 //   8. Milestone 2: Modify's read-out in Logic follows Bank and Modifier; the panel's Modify text and modifier read-out
 //      (and that they fit their places for every modifier); Modify 12:00 = Bank Off bit for bit through the plugin;
 //      Bank, Modifier, Routing and Modify automated hard without clicks; Size in Sync lining up with Logic's beats.
-//   9. Milestone 3: every control live and no milestone tag left on the panel (checked in the drawn pixels); Engage by
+//   9. Milestone 3: every control live; Engage by
 //      automation (dry only, exactly), Dry kill; Loop held on the panel (and latched with Latch), Hold to scan held;
 //      the presets: Save left / right, Left / Right heard at once when the switch is automated (no panel), the controls
 //      then showing the snapshot, Live bringing back the settings from before, an empty slot playing Live, saved with
 //      the project (and projects from 0.1.0 and 0.2.0 loading with empty slots); switching presets, Engage, Loop and
 //      the options by automation while a tone plays: no clicks; bypass and transport with Loop and Collect on.
+//
+//  10. 0.3.1: the panel's fixed artwork is stored as a picture, and the 30-times-a-second update (live areas only) is
+//      much lighter than drawing the whole panel every time.
 //
 // The build workflow runs it on every push and fails if any check fails. "--snapshot <folder>" writes pictures of the panel.
 
@@ -411,9 +414,9 @@ static void testPanel()
 {
     using namespace AnmStyle;
     // The title fits its area, measured with the panel's own font
-    const float w = textWidth ("Anamnesis", titleSize, true);
-    CHECK (w > 40.0f && w <= titleRight - titleLeft, "title width %.1f fits the title area (%.0f)", w, titleRight - titleLeft);
-    std::printf ("title \"Anamnesis\": %.1f of %.0f panel units\n", w, titleRight - titleLeft);
+    const float w = titleWidth();
+    CHECK (w > 60.0f && w <= titleRight - titleLeft, "title width %.1f fits the title area (%.0f)", w, titleRight - titleLeft);
+    std::printf ("title \"ANAMNESIS\": %.1f of %.0f panel units\n", w, titleRight - titleLeft);
 
     for (int z = 0; z < AnamnesisAudioProcessor::kNumZooms; ++z)
     {
@@ -425,17 +428,19 @@ static void testPanel()
                "zoom %.0f%%: window %d x %d", s * 100.0f, ed->getWidth(), ed->getHeight());
         const auto img = ed->createComponentSnapshot (ed->getLocalBounds(), true, 1.0f);
         CHECK (img.isValid() && img.getWidth() == ed->getWidth(), "zoom %.0f%%: the panel draws", s * 100.0f);
-        // in the drawn pixels: the title's ivory never spills past the title area (up to just before "particledots")
+        // in the drawn pixels: the title's gold stays inside its area, and nothing bright sits in the gaps between the
+        // title area and the two ornament lines
         int spill = 0, inside = 0;
-        const int x0 = (int) std::ceil ((titleRight + 1.0f) * s), x1 = (int) std::floor (134.0f * s);
-        for (int y = (int) (12 * s); y < (int) (38 * s); ++y)
+        for (int y = (int) (10 * s); y < (int) (40 * s); ++y)
         {
-            for (int x = (int) (titleLeft * s); x < (int) (titleRight * s); ++x)
+            for (int x = (int) std::ceil (titleLeft * s); x < (int) (titleRight * s); ++x)
                 if (img.getPixelAt (x, y).getBrightness() > 0.6f) ++inside;
-            for (int x = x0; x < x1; ++x)
+            for (int x = (int) std::ceil ((ornamentLeftEnd + 1.5f) * s); x < (int) ((titleLeft - 0.5f) * s); ++x)
+                if (img.getPixelAt (x, y).getBrightness() > 0.6f) ++spill;
+            for (int x = (int) std::ceil ((titleRight + 0.5f) * s); x < (int) ((ornamentRightStart - 1.5f) * s); ++x)
                 if (img.getPixelAt (x, y).getBrightness() > 0.6f) ++spill;
         }
-        CHECK (inside > 30 && spill == 0, "zoom %.0f%%: title drawn inside its area (%d lit pixels inside, %d outside)", s * 100.0f, inside, spill);
+        CHECK (inside > 60 && spill == 0, "zoom %.0f%%: title drawn inside its area (%d lit pixels inside, %d outside)", s * 100.0f, inside, spill);
     }
 
     AnamnesisAudioProcessor proc;
@@ -453,21 +458,8 @@ static void testPanel()
         auto* c = findById (panel, id);
         CHECK (c != nullptr && c->isEnabled() && c->getAlpha() > 0.99f, "%s is live", id);
     }
-    {
-        // no milestone tag is drawn any more: no tag amber in the places the M3 tags were (Preset, the big buttons, Options)
-        const auto img = ed->createComponentSnapshot (ed->getLocalBounds(), true, 1.0f);
-        const float s = (float) ed->getWidth() / (float) panelW;
-        int amber = 0;
-        struct R { int x, y; } tags[5] = { { 440, 276 }, { 108, 448 }, { 238, 448 }, { 498, 448 }, { 68, 490 } };
-        for (const auto& t : tags)
-            for (int y = t.y; y < t.y + 16; ++y)
-                for (int x = t.x; x < t.x + 24; ++x)
-                {
-                    const auto c = img.getPixelAt ((int) ((float) x * s), (int) ((float) y * s));
-                    if (c.getRed() > 200 && c.getGreen() > 130 && c.getGreen() < 210 && c.getBlue() < 140) ++amber;
-                }
-        CHECK (amber == 0, "no milestone tags left on the panel (%d tag-coloured pixels where they were)", amber);
-    }
+    // The fixed artwork is a separate layer drawn once into a stored picture (the live parts are drawn over it)
+    CHECK (panel.getBackdrop().getCachedComponentImage() != nullptr, "the panel's fixed artwork is stored as a picture");
     int liveKnobs = 0, dimKnobs = 0;
     for (auto* c : panel.getChildren())
         if (auto* k = dynamic_cast<AnmKnob*> (c)) (k->isEnabled() ? liveKnobs : dimKnobs)++;
@@ -488,7 +480,7 @@ static void testPanel()
 
     // Zoom menu
     auto& zoom = panel.getZoomMenu();
-    CHECK (zoom.getNumItems() == 5 && zoom.getItemText (1) == "Zoom 100%", "Zoom menu: %d entries", zoom.getNumItems());
+    CHECK (zoom.getNumItems() == 5 && zoom.getItemText (1) == "ZOOM 100%", "Zoom menu: %d entries", zoom.getNumItems());
     zoom.setSelectedId (4, juce::sendNotificationSync);
     CHECK (proc.getZoom() == 3 && ed->getWidth() == juce::roundToInt (panelW * 1.5f), "choosing Zoom 150%% resizes the window (%d)", ed->getWidth());
 }
@@ -577,19 +569,25 @@ static void testModifiers()
                 {
                     setModifier (p, kind, r, (float) i / 40.0f);
                     panel.refreshTexts();
-                    const float line1 = textWidth (panel.getReadoutTitle(), 12.0f) + 12.0f + textWidth (panel.getReadoutRoute(), 11.0f);
-                    const float line2 = textWidth (panel.getReadoutDetail(), 11.0f);
+                    const float line1 = textWidth (panel.getReadoutTitle().toUpperCase(), 11.0f, false, 1.5f);
+                    const auto wrapped = AnamnesisPanel::wrapDetail (panel.getReadoutDetail());
+                    float line2 = wrapped.size() > 2 ? 999.0f : 0.0f;               // at most two lines are shown
+                    for (const auto& l : wrapped) line2 = std::max (line2, textWidth (l, 11.0f));
+                    const float line3 = textWidth (panel.getReadoutRoute(), 11.0f);
                     const float under = textWidth (panel.getModifyText(), 11.0f);
-                    widest = std::max (widest, std::max (line1, line2));
+                    widest = std::max (widest, std::max (line1, std::max (line2, line3)));
                     widestKnob = std::max (widestKnob, under);
-                    if (line1 > 244.0f || line2 > 244.0f || under > 104.0f)
+                    if (line1 > AnamnesisPanel::readoutTextRoom || line2 > AnamnesisPanel::readoutTextRoom
+                        || line3 > AnamnesisPanel::readoutTextRoom || under > AnamnesisPanel::modifyTextRoom)
                     {
                         if (++tooWide < 4) std::printf ("  too wide: %s | %s | %s | %s\n", panel.getReadoutTitle().toRawUTF8(), panel.getReadoutRoute().toRawUTF8(),
                                                         panel.getReadoutDetail().toRawUTF8(), panel.getModifyText().toRawUTF8());
                     }
                 }
-        CHECK (tooWide == 0, "every modifier's texts fit the panel (%d too wide; widest read-out line %.0f of 244, widest Modify value %.0f of 104)",
-               tooWide, widest, widestKnob);
+        CHECK (tooWide == 0, "every modifier's texts fit the panel (%d too wide; widest read-out line %.0f of %.0f, widest Modify value %.0f of %.0f)",
+               tooWide, widest, AnamnesisPanel::readoutTextRoom, widestKnob, AnamnesisPanel::modifyTextRoom);
+        std::printf ("panel texts: widest read-out line %.0f of %.0f, widest Modify value %.0f of %.0f\n",
+                     widest, AnamnesisPanel::readoutTextRoom, widestKnob, AnamnesisPanel::modifyTextRoom);
         setModifier (p, anm::ModSmoothSpeed, anm::RouteFeed, knobAt (0.5f));
         panel.refreshTexts();
         CHECK (panel.getReadoutTitle() == "B1  Smooth speed" && panel.getReadoutRoute().startsWith ("Feed") && panel.getModifyText().startsWith ("fwd"),
@@ -844,6 +842,52 @@ static void testMilestone3()
     }
 }
 
+// ------------------------------------------------------------------------------------------------ 10. drawing cost
+
+// 0.3.1: the panel's fixed artwork is drawn once into a stored picture, and 30 times a second only the live areas are
+// redrawn. Measured here against drawing the whole panel every time (what 0.3.0 did), with a full memory strip.
+static void testDrawingCost()
+{
+    Runner r (48000.0);
+    setReal (param (r.proc, "scanMode"), 1.0f);
+    setReal (param (r.proc, "scan"), 0.5f);
+    setReal (param (r.proc, "spread"), 0.4f);
+    r.run (30.0, [&] (long i) { const double t = i / 48000.0; return (float) (0.5 * std::fabs (std::sin (t * 0.9)) * std::sin (2 * kPi * 220 * t)); });
+    for (int z : { 1, 4 })
+    {
+        r.proc.setZoom (z);
+        std::unique_ptr<juce::AudioProcessorEditor> edBase (r.proc.createEditor());
+        auto* ed = dynamic_cast<AnamnesisAudioProcessorEditor*> (edBase.get());
+        if (ed == nullptr) { CHECK (false, "the panel opens"); return; }
+        const float s = AnamnesisAudioProcessor::kZooms[z];
+        juce::Image img (juce::Image::ARGB, ed->getWidth(), ed->getHeight(), true);
+        juce::RectangleList<int> live;
+        for (const auto& a : AnamnesisPanel::liveAreas())
+            live.add (a.toFloat().transformedBy (juce::AffineTransform::scale (s)).getSmallestIntegerContainer());
+        auto timeIt = [&] (bool liveOnly, int n)
+        {
+            const auto t0 = std::chrono::steady_clock::now();
+            for (int i = 0; i < n; ++i)
+            {
+                juce::Graphics g (img);
+                if (liveOnly) g.reduceClipRegion (live);
+                ed->paintEntireComponent (g, true);
+            }
+            return std::chrono::duration<double, std::milli> (std::chrono::steady_clock::now() - t0).count() / n;
+        };
+        auto& backdrop = ed->getPanel().getBackdrop();
+        backdrop.setBufferedToImage (false);
+        timeIt (false, 3);
+        const double whole = timeIt (false, 20);
+        backdrop.setBufferedToImage (true);
+        timeIt (true, 3);
+        const double tick = timeIt (true, 60);
+        std::printf ("drawing at zoom %.0f%%: live update %.2f ms, whole panel every time %.2f ms\n", s * 100.0f, tick, whole);
+        CHECK (tick < 0.6 * whole, "zoom %.0f%%: the live update (%.2f ms) is much lighter than drawing the whole panel (%.2f ms)", s * 100.0f, tick, whole);
+        CHECK (tick < 6.0, "zoom %.0f%%: the live update takes %.2f ms (limit 6 ms; 30 updates a second)", s * 100.0f, tick);
+    }
+}
+
 // ------------------------------------------------------------------------------------------------ pictures of the panel
 
 static void writeSnapshots (const juce::File& dir)
@@ -933,6 +977,7 @@ int main (int argc, char** argv)
     testDefaults();
     testHosting();
     testPanel();
+    testDrawingCost();
     testAutomation();
     testCpu();
     testModifiers();

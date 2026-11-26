@@ -9,7 +9,26 @@ In Logic: **Audio Units > particledots > Anamnesis** (an audio effect: put it in
 Status: **all 3 milestones done.** Milestone 1 (0.1.0) tested in Logic on 2026-11-25 on both Macs (M4 Mac mini with
 Logic 11.2.2, Intel Mac with Logic 10.7.8); milestone 2 (0.2.0, the modifiers and routing) tested in Logic on 2026-11-25 on
 the Intel Mac. Milestone 3 (0.3.0: Engage, Loop, Hold to scan, the options, Memory dry, Wide spread, the preset slots) tested in Logic
-on 2026-11-25 on the Intel Mac.
+on 2026-11-25 on the Intel Mac. 0.3.1 (2026-11-26): the new panel look (below); the sound and the controls are unchanged.
+
+## The panel (0.3.1)
+
+Black with gold hairlines, in framed sections: **Memory** (the strip), **Echo** (Level, Repeats, Size, Free / Sync),
+**Recall** (Memory dry, Spread, Scan, Auto / Manual), **Modifier** (Modify, the read-out, Bank, Modifier, Routing),
+**Presets**, **Perform** (Engage, Loop, Tap, Hold to scan, Clear memory) and **Options**. Cream knob caps sit inside gold
+range arcs. Blue lamps are the only colour and mean "on" / "chosen".
+
+Gold flow lines show how the plugin works: Size runs to the "now" end of the memory (Repeats, dotted, joins it: the
+echo), and Spread and Scan run up to their play heads on the strip; their ends slide along with the heads. Where the Size
+line crosses the other two it hops over them.
+
+The window is 680 x 600 at 100% (40 taller than 0.3.0's). The title font is Marcellus. Moving controls on the panel does
+not touch the control list, so automation and saved projects are unaffected.
+
+**Drawing**: the fixed artwork is drawn once into a stored picture (again only when the window opens or the zoom
+changes); 30 times a second only the strip, the moving line ends and the value texts are redrawn. Measured on the build
+machine this takes about half the time of 0.3.0's panel (0.7 ms against 1.5 ms per update at 100%, 1.5 ms against
+2.9 ms at 200%). The panel is never drawn while its window is closed, and the sound is computed separately from it.
 
 ## Installing
 
@@ -102,7 +121,7 @@ Scan and Spread are linked to Size so they stay in time: their distances snap to
 of Size up to 2 Sizes, halves up to 8 Sizes, whole Sizes beyond).
 
 The memory strip at the top shows the 3 minutes (newest at the right), what has been recorded, the echo window (Size),
-and where the Scan (amber) and Spread (teal) play heads are.
+and where the Scan (blue, solid) and Spread (cream, dashed) play heads are.
 
 **Stereo**: stereo in and out (or mono in and out). Both sides use the same heads, times and random choices, so the stereo
 picture of what you play is kept. Wide spread puts the main echo on the left and the Spread echo on the right.
@@ -142,7 +161,6 @@ sweep makes one splice, not dozens).
 
 ## Later (ideas, not built unless asked)
 
-- Cosmetic tweaks of the panel once all milestones are finished.
 - Bounce / ramp movement of the knobs (Logic's automation does this today).
 - Saving and loading the memory as a WAV file.
 - An option to pause the memory while Logic is stopped (today it records whatever Logic sends, like the pedal).
@@ -177,18 +195,19 @@ GitHub Actions builds everything; nothing is compiled on a Mac by hand. Every pu
   staying below full scale; Wipe, Memory dry On / Off / Scanning, Wipe in Feed; Wide spread; every switch flipped 10
   times a second (no clicks); 5 minutes of loud input with Repeats infinite, Level max, Collect, Memory dry On and every
   switch flipping in each routing (bounded); Loop in Feed with Collect for 5 minutes; block sizes; sample rates; CPU.
-- **Plugin-layer check** (`check/`, `AnamnesisCheck`): 137 checks: the control list against the stored 0.1.0 list
+- **Plugin-layer check** (`check/`, `AnamnesisCheck`): 141 checks: the control list against the stored 0.1.0 list
   (`check/golden/`), saved projects from every earlier version, first-load echo, hosting like Logic (mono and stereo,
   44.1 to 192 kHz, odd block sizes, bypass, Logic's tempo, Clear by automation), the panel at every zoom size with the
   title measured and checked in the drawn pixels, dimmed and live controls, Tap, heavy automation of every control;
   milestone 2: Logic's read-out of Modify for each modifier, the panel's Modify text and modifier read-out (and that they
   fit for every modifier and setting), Modify 12:00 = Bank Off bit for bit through the plugin, Bank / Modifier / Routing /
-  Modify automated hard without clicks, the Size grid following Logic's beats; milestone 3: every control live and no
-  milestone tag left (checked in the drawn pixels), Engage by automation, Dry kill, Loop held and latched on the panel,
+  Modify automated hard without clicks, the Size grid following Logic's beats; milestone 3: every control live, Engage by automation, Dry kill, Loop held and latched on the panel,
   Hold to scan held, Save left / right, presets heard at once when automated and then shown by the controls, Live coming
   back, an empty slot playing Live, presets saved with the project (and 0.1.0 / 0.2.0 projects loading with empty slots),
   every milestone 3 control and the presets automated hard without clicks, bypass / transport / a new sample rate with
-  Loop and Collect on. It also draws pictures of the panel (the `panel-pictures` download of each run).
+  Loop and Collect on; 0.3.1: the panel's fixed artwork stored as a picture, the live update measured against drawing
+  the whole panel every time (must be well under it, and under 6 ms at 200%), the read-out wrapping to fit for every
+  modifier and setting. It also draws pictures of the panel (the `panel-pictures` download of each run).
 - **macOS build**: AU and VST3, universal binary checked with `lipo`, ad-hoc signed, Apple's `auval`, `pluginval`
   (strictness 5, AU and VST3), and the package with the installer and INSTALL.txt.
 
@@ -216,7 +235,8 @@ Codes (fixed for good): AU type `aufx`, plugin code `Anms`, manufacturer `Pdot`,
   the exact-copy Loop with its settling length, Hold to scan, Collect's layering inside the memory tape, Wipe, Memory dry
   and its movement detector, Wide spread, Dry kill, Trails, the preset slots with their Live store.
 
-Fonts: Space Grotesk (SIL Open Font License, `plugin/Fonts/OFL-SpaceGrotesk.txt`), built into the plugin.
+Fonts: Space Grotesk (SIL Open Font License, `plugin/Fonts/OFL-SpaceGrotesk.txt`) and, for the title, Marcellus (SIL
+Open Font License, `plugin/Fonts/OFL-Marcellus.txt`), both built into the plugin.
 
 ## Test results
 

@@ -8,7 +8,7 @@ if(APPLE)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
 endif()
 
-project(Anamnesis VERSION 0.3.0 LANGUAGES C CXX)
+project(Anamnesis VERSION 0.3.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -47,6 +47,7 @@ if(ANAMNESIS_BUILD_PLUGIN OR ANAMNESIS_BUILD_CHECK)
         SOURCES
             plugin/Fonts/SpaceGrotesk-Regular.ttf
             plugin/Fonts/SpaceGrotesk-Medium.ttf
+            plugin/Fonts/Marcellus-Regular.ttf
     )
     if(ANAMNESIS_BUILD_PLUGIN)
         add_subdirectory(plugin)
